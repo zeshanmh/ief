@@ -127,3 +127,27 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+.ipynb_checkpoints/
+plots/
+*.pkl*
+*.npy
+*.txt
+*.swp
+expt/jan*
+expt/feb*
+expt/*.txt
+expt/*.remove
+*.sh
+checkpoint-*
+*.p
+TensorFlow-Survival-Analysis/
+*.pdf
+*.pyc
+*.pkl
+venv/
+*/RPtest*
+mmrf_csv*
+*good_models/
+
+*tb_logs*
