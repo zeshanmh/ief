@@ -1,13 +1,16 @@
-fname: 'test_fomm' # name of the run; will save in tb_logs/test_fomm
+fname: 'test_ssm' # name of the run; will save in tb_logs/test_fomm
 parameters:   
-  model_name: ['fomm']
+  model_name: ['ssm']
   dataset: ['mm']
   fold: [1]
   dim_hidden: [300]
-  mtype: ['linear']
+  # mtype: ['linear']
+  etype: ['lin']
+  ttype: ['lin']
   bs: [600]
   C: [0.1]
   reg_all: [True]
   reg_type: ['l1']
   checkpoint_callback: [False] # switch to True if you want to save best model
+  logger: [False]
   max_epochs: [1000]
