@@ -17,10 +17,13 @@ from ml_mmrf_v1.data import load_mmrf
 from synthetic.synthetic_data import load_synthetic_data_trt, load_synthetic_data_noisy
 from models.fomm import FOMM 
 
-def test_fomm_load(): 
+def test_fomm_load():
+    # need to rewrite test by saving a model first and then loading it 
     checkpoint_path = '../tb_logs/test_model/version_0/checkpoints/epoch=403.ckpt'
     checkpoint = torch.load(checkpoint_path, map_location=lambda storage, loc: storage)
     hparams    = checkpoint['hyper_parameters']
+    hparams['otype'] = 'linear'
+    hparams['alpha1_type'] = 'linear'
     fomm = FOMM(**hparams); fomm.init_model() 
     fomm.load_state_dict(checkpoint['state_dict'])
     assert 'dim_data' in fomm.hparams
@@ -38,6 +41,7 @@ def test_fomm_linear():
     parser.add_argument('--fname', type=str, help='name of save file')
     parser.add_argument('--imp_sampling', type=bool, default=False, help='importance sampling to estimate marginal likelihood')
     parser.add_argument('--nsamples', default=1, type=int)
+    parser.add_argument('--nsamples_syn', default=1000, type=int, help='number of training samples for synthetic data')
     parser.add_argument('--optimizer_name', type=str, default='adam')
     parser.add_argument('--dataset', default='mm', type=str)
     parser.add_argument('--bs', default=600, type=int, help='batch size')
@@ -52,11 +56,12 @@ def test_fomm_linear():
 
     # parse args and convert to dict
     args = parser.parse_args()
+    args.max_epochs = 100
     dict_args = vars(args)
 
     # initialize FOMM w/ args and train 
     model = FOMM(**dict_args)
-    trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=False, max_epochs=100)
+    trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=False)
     trainer.fit(model)
 
     # evaluate on validation set; this should match what we were getting with the old codebase (after 100 epochs)
@@ -64,7 +69,46 @@ def test_fomm_linear():
     (nelbo, nll, kl, _), _ = model.forward(*valid_loader.dataset.tensors, anneal = 1.)
     assert (nelbo.item() - 1106.95) < 1e-1
 
+def test_fomm_gated(): 
+    seed_everything(0)
+
+    parser = ArgumentParser()
+    parser.add_argument('--model_name', type=str, default='fomm', help='fomm, ssm, or gru')
+    parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
+    parser.add_argument('--anneal', type=float, default=1., help='annealing rate')
+    parser.add_argument('--fname', type=str, help='name of save file')
+    parser.add_argument('--imp_sampling', type=bool, default=False, help='importance sampling to estimate marginal likelihood')
+    parser.add_argument('--nsamples', default=1, type=int)
+    parser.add_argument('--nsamples_syn', default=1000, type=int, help='number of training samples for synthetic data')
+    parser.add_argument('--optimizer_name', type=str, default='adam')
+    parser.add_argument('--dataset', default='mm', type=str)
+    parser.add_argument('--bs', default=600, type=int, help='batch size')
+    parser.add_argument('--fold', default=1, type=int)
+
+    # THIS LINE IS KEY TO PULL THE MODEL NAME
+    temp_args, _ = parser.parse_known_args()
+
+    # add rest of args from FOMM and base trainer
+    parser = FOMM.add_model_specific_args(parser)
+    parser = Trainer.add_argparse_args(parser)
+
+    # parse args and convert to dict
+    args = parser.parse_args()
+    args.max_epochs = 100
+    args.mtype      = 'gated'
+    dict_args = vars(args)
+
+    # initialize FOMM w/ args and train 
+    model = FOMM(**dict_args)
+    trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=False)
+    trainer.fit(model)
+
+    # evaluate on validation set; this should match what we were getting with the old codebase (after 100 epochs)
+    valid_loader = model.val_dataloader()
+    (nelbo, nll, kl, _), _ = model.forward(*valid_loader.dataset.tensors, anneal = 1.)
+    assert (nelbo.item() - 175.237) < 1e-1
+
 
 if __name__ == '__main__':
-    test_fomm_linear()
+    test_fomm_load()
 

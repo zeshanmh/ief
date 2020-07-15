@@ -8,6 +8,9 @@ import torch.nn as nn
 
 from models.base import Model
 from models.utils import *
+from models.ssm.inference import RNN_STInf, Attention_STInf
+from models.iefs.gated import GatedTransition
+from models.iefs.moe import MofE
 from pyro.distributions import Normal, Independent, Categorical, LogNormal
 from typing import List, Tuple
 from torch import Tensor
@@ -15,8 +18,6 @@ from collections import namedtuple
 from typing import List, Tuple
 from torch.autograd import Variable
 from argparse import ArgumentParser
-
-np.random.seed(0)
 
 class FOMM(Model): 
     def __init__(self, 
@@ -31,15 +32,32 @@ class FOMM(Model):
         self.save_hyperparameters()
 
     def init_model(self): 
-        mtype     = self.hparams['mtype']
-        dim_data  = self.hparams['dim_data']
-        dim_base  = self.hparams['dim_base']
-        dim_treat = self.hparams['dim_treat']
+        mtype      = self.hparams['mtype']; otype = self.hparams['otype']
+        alpha1_type = self.hparams['alpha1_type']
+        dim_hidden = self.hparams['dim_hidden']
+        dim_data   = self.hparams['dim_data']
+        dim_base   = self.hparams['dim_base']
+        dim_treat  = self.hparams['dim_treat']
 
         # define the transition function 
         if mtype == 'linear':
             self.model_mu   = nn.Linear(dim_data, dim_data)
             self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data) 
+        elif mtype == 'gated':
+            avoid_init = False
+            if dim_data !=16:
+                avoid_init = True
+            self.model_mu   = GatedTransition(dim_data, dim_treat+dim_base, dim_hidden=dim_hidden, dim_input=dim_data+dim_treat+dim_base, \
+                                use_te = True, avoid_init = avoid_init, alpha1_type=alpha1_type, otype=otype)
+            self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)
+        elif mtype == 'moe': 
+            self.model_mu   = MofE(dim_data, dim_treat+dim_base, dim_input = dim_data+dim_treat+dim_base, num_experts=3, eclass='nl')
+            self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)
+        elif mtype == 'nl': 
+            self.model_mu   = nn.Sequential(nn.Linear(dim_treat+dim_base+dim_data, dim_hidden), nn.ReLU(True), nn.Linear(dim_hidden, dim_data))
+            self.model_sig  = nn.Sequential(nn.Linear(dim_treat+dim_base+dim_data, dim_hidden), nn.ReLU(True), nn.Linear(dim_hidden, dim_data))
+        else: 
+            raise ValueError('Bad model type.')
 
     def p_X(self, X, A, B):
         base_cat = B[:,None,:].repeat(1, max(1, X.shape[1]-1), 1)
@@ -87,13 +105,14 @@ class FOMM(Model):
         with torch.no_grad():
             base           = B[:,None,:]
             obs_list       = [X[:,[0],:]]
+            mtype = self.hparams['mtype']
             for t in range(1, T_forward):
                 x_prev     = obs_list[-1]
-                if self.mtype =='carry_forward':
+                if mtype =='carry_forward':
                     p_x_mu   = x_prev
-                elif self.mtype=='linear_prior':
+                elif mtype=='linear_prior':
                     p_x_mu   = self.model_mu(x_prev, A[:,[t-1],:], base)
-                elif 'logcellkill' in self.mtype or 'treatment_exp' in self.mtype or 'gated' in self.mtype:
+                elif 'logcellkill' in mtype or 'treatment_exp' in mtype or 'gated' in mtype:
                     Aval     = A[:,[t-1],:]
                     cat      = torch.cat([x_prev, A[:,[t-1],:], base], -1)
                     p_x_mu   = self.model_mu(cat, torch.cat([Aval[...,[0]], base, Aval[...,1:]],-1))
@@ -137,6 +156,8 @@ class FOMM(Model):
         parser.add_argument('--C', type=float, default=.1, help='regularization strength')
         parser.add_argument('--reg_all', type=bool, default=True, help='regularize all weights or only subset')    
         parser.add_argument('--reg_type', type=str, default='l1', help='regularization type')
+        parser.add_argument('--alpha1_type', type=str, default='linear', help='alpha1 parameterization in TreatExp IEF')
+        parser.add_argument('--otype', type=str, default='linear', help='final layer of GroMOdE IEF (linear, identity, nl)')
 
         return parser 
 
