@@ -46,9 +46,6 @@ if __name__ == '__main__':
     
     # Dictionary of lists in JSON config
     param_dict = config.get('parameters')
-    if 'generator' in param_dict:
-        param_dict['generator'] = [(d['model'], d['config']) for d in\
-            param_dict['generator']]
     param_names = param_dict.keys()
     param_vals = [param_dict[k] for k in param_names]
 

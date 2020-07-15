@@ -5,6 +5,8 @@ from pytorch_lightning import Trainer, seed_everything
 from argparse import ArgumentParser
 from pytorch_lightning.loggers import TensorBoardLogger, TestTubeLogger
 from models.fomm import FOMM
+from models.ssm.ssm import SSM
+from models.rnn import GRU 
 
 def main(args):
     dict_args = vars(args)
@@ -12,14 +14,18 @@ def main(args):
     # pick model
     if args.model_name == 'fomm':
         model = FOMM(**dict_args)
+    elif args.model_name == 'ssm': 
+        model = SSM(**dict_args)
+    elif args.model_name == 'gru':
+        model = GRU(**dict_args)
 
-    if args.fname is not None: 
+    if not args.logger: 
+        logger = False
+    elif args.fname is not None: 
         logger = TensorBoardLogger('tb_logs', name=os.path.join('tb_logs',args.fname))
     else: 
         logger = TensorBoardLogger('tb_logs')
-    trainer = Trainer.from_argparse_args(args)
-    trainer.deterministic = True
-    trainer.logger        = logger
+    trainer = Trainer.from_argparse_args(args, deterministic=True, logger=logger)
     trainer.fit(model)
 
 if __name__ == '__main__':
@@ -36,6 +42,7 @@ if __name__ == '__main__':
     parser.add_argument('--nsamples', default=1, type=int)
     parser.add_argument('--optimizer_name', type=str, default='adam')
     parser.add_argument('--dataset', default='mm', type=str)
+    parser.add_argument('--nsamples_syn', default=1000, type=int, help='number of training samples for synthetic data')
     parser.add_argument('--bs', default=600, type=int, help='batch size')
     parser.add_argument('--fold', default=1, type=int)
 
@@ -45,6 +52,10 @@ if __name__ == '__main__':
     # let the model add what it wants
     if temp_args.model_name == 'fomm': 
         parser = FOMM.add_model_specific_args(parser)
+    elif temp_args.model_name == 'ssm': 
+        parser = SSM.add_model_specific_args(parser)
+    elif temp_args.model_name == 'gru': 
+        parser = GRU.add_model_specific_args(parser)
 
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()

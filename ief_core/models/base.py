@@ -59,6 +59,7 @@ class Model(pl.LightningModule):
         return {'loss': avg_loss, 'log': tensorboard_logs, 'progress_bar': dict_}
 
     def validation_step(self, batch, batch_idx):
+        # import pdb; pdb.set_trace()
         (nelbo, nll, kl, _), _ = self.forward(*batch, anneal = 1.)
         if self.hparams['imp_sampling']: 
             pass
@@ -97,9 +98,9 @@ class Model(pl.LightningModule):
                               suffix='_2mos')
 
         elif self.hparams['dataset'] == 'synthetic': 
-            nsamples        = {'train':50, 'valid':1000, 'test':200}
+            nsamples        = {'train':self.hparams['nsamples_syn'], 'valid':1000, 'test':200}
             print(f'training on {nsamples["train"]} samples')
-            alpha_1_complex = False; per_missing = 0.; add_feats = [0]; num_trt = 1
+            alpha_1_complex = False; per_missing = 0.; add_feat = 0; num_trt = 1
             ddata = load_synthetic_data_trt(fold_span = [fold], \
                                             nsamples = nsamples, \
                                             distractor_dims_b=4, \
@@ -114,9 +115,9 @@ class Model(pl.LightningModule):
         self.hparams['dim_base']  = ddata[fold]['train']['b'].shape[-1]
         self.hparams['dim_data']  = ddata[fold]['train']['x'].shape[-1]
         self.hparams['dim_treat'] = ddata[fold]['train']['a'].shape[-1]
-        self.init_model()
         self.ddata = ddata 
-
+        self.init_model()
+        
     def load_helper(self, tvt):
         fold = self.hparams['fold']; batch_size = self.hparams['bs']
         B  = torch.from_numpy(self.ddata[fold][tvt]['b'].astype('float32'))
