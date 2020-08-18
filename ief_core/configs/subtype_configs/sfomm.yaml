@@ -1,0 +1,25 @@
+fname: 'sfomm_tr_mm' # name of the run; will save in tb_logs/test_fomm #failed at 25
+parameters:   
+  model_name: ['sfomm']
+  dataset: ['mm']
+  fold: [1]
+  # nsamples_syn: [2000] #50,1000 
+  dim_stochastic: [16,48] # 16,48
+  dim_hidden: [300]
+  mtype: ['treatment_exp']
+  inftype: ['rnn']
+  bs: [600]
+  C: [0.] #0.01, 0.1
+  reg_all: [True,False] #False, True
+  reg_type: ['l1','l2'] #'l1', 'l2'
+  alpha1_type: ['linear']
+  loss_type: ['unsup','semisup']
+  eval_type: ['f1']
+  otype: ['linear']
+  checkpoint_callback: [False] # switch to True if you want to save best model
+  logger: [True]
+  check_val_every_n_epoch: [10]
+  max_epochs: [5000]
+  progress_bar_refresh_rate: [1]
+  gpu_id: [2]
+  add_stochastic: [False]
