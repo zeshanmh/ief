@@ -6,6 +6,7 @@ import warnings
 import torch.nn.init as init
 import torch.nn as nn
 
+from distutils.util import strtobool
 from models.base import Model
 from models.utils import *
 from models.ssm.inference import RNN_STInf, Attention_STInf
@@ -44,6 +45,7 @@ class SSM(Model):
         inftype     = self.hparams['inftype']; etype = self.hparams['etype']; ttype = self.hparams['ttype']
         augmented   = self.hparams['augmented']; alpha1_type = self.hparams['alpha1_type']
         rank        = self.hparams['rank']; combiner_type = self.hparams['combiner_type']; nheads = self.hparams['nheads']
+        add_stochastic = self.hparams['add_stochastic']
 
         # Inference Network
         if inftype == 'rnn':
@@ -70,9 +72,11 @@ class SSM(Model):
 
         # Transition Function
         if self.hparams['include_baseline']:
-            self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat+dim_base, dim_hidden, ttype, augmented=augmented, alpha1_type=alpha1_type)
+            self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat+dim_base, dim_hidden, ttype, \
+                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic)                
         else:
-            self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat, dim_hidden, ttype, augmented=augmented, alpha1_type=alpha1_type)
+            self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat, dim_hidden, ttype, \
+                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic)
         
         # Prior over Z1
         self.prior_W        = nn.Linear(dim_treat+dim_data+dim_base, dim_stochastic)
@@ -182,7 +186,7 @@ class SSM(Model):
         Zlist = [Z_start]
         for t in range(1, T_forward):
             Ztm1       = Zlist[t-1]
-            if self.include_baseline:
+            if self.hparams.include_baseline:
                 Aval = A[:,t-1,:]
                 Acat = torch.cat([Aval[...,[0]], B, Aval[...,1:]], -1)
                 mut, sigmat= self.transition_fxn(Ztm1, Acat, eps = eps)
@@ -275,17 +279,18 @@ class SSM(Model):
         parser.add_argument('--ttype', type=str, default='lin', help='SSM transition function')
         parser.add_argument('--inftype', type=str, default='rnn_relu', help='inference network type')
         parser.add_argument('--post_approx', type=str, default='diag', help='inference of approximate posterior distribution')
-        parser.add_argument('--include_baseline', type=bool, default=True, help='whether or not to condition on baseline data in gen model')            
+        parser.add_argument('--include_baseline', type=strtobool, default=True, help='whether or not to condition on baseline data in gen model')            
         parser.add_argument('--elbo_samples', type=int, default=1, help='number of samples to run through inference network')        
-        parser.add_argument('--augmented', type=bool, default=False, help='SSM augmented')        
+        parser.add_argument('--augmented', type=strtobool, default=False, help='SSM augmented')        
         parser.add_argument('--C', type=float, default=.01, help='regularization strength')
         parser.add_argument('--nheads', type=int, default=1, help='number of heads for attention inference network')        
         parser.add_argument('--rank', type=int, default=5, help='rank of matrix for low_rank posterior approximation')
         parser.add_argument('--combiner_type', type=str, default='pog', help='combiner function used in inference network')
-        parser.add_argument('--reg_all', type=bool, default=True, help='regularize all weights or only subset')    
+        parser.add_argument('--reg_all', type=strtobool, default=False, help='regularize all weights or only subset')    
         parser.add_argument('--reg_type', type=str, default='l2', help='regularization type (l1 or l2)')
         parser.add_argument('--alpha1_type', type=str, default='linear', help='alpha1 parameterization in TreatExp IEF')
         parser.add_argument('--otype', type=str, default='linear', help='final layer of GroMOdE IEF (linear, identity, nl)')
+        parser.add_argument('--add_stochastic', type=strtobool, default=False, help='conditioning alpha-1 of TEXP on S_[t-1]')
 
         return parser 
     
@@ -299,7 +304,8 @@ class TransitionFunction(nn.Module):
                  ttype, 
                  augmented: bool = False, 
                  alpha1_type: str = 'linear', 
-                 otype: str = 'linear'):
+                 otype: str = 'linear', 
+                 add_stochastic: bool = False):
         super(TransitionFunction, self).__init__()
         self.dim_stochastic  = dim_stochastic
         self.dim_treat       = dim_treat
@@ -335,7 +341,7 @@ class TransitionFunction(nn.Module):
             avoid_init = False
             if self.dim_data != 16:
                 avoid_init = True
-            self.t_mu               = GatedTransition(dim_input, dim_treat, avoid_init = avoid_init, dim_output=dim_stochastic, alpha1_type=alpha1_type, otype=otype)
+            self.t_mu               = GatedTransition(dim_input, dim_treat, avoid_init = avoid_init, dim_output=dim_stochastic, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic)
             self.t_sigma            = nn.Linear(dim_input+dim_treat, dim_stochastic)
         elif self.ttype == 'moe': 
             self.t_mu               = MofE(dim_input, dim_treat, dim_output=dim_stochastic, eclass='nl', num_experts=3) 

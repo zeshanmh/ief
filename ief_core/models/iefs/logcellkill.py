@@ -9,22 +9,22 @@ import sys, os
 from torch.autograd import grad
 
 class LogCellKill(nn.Module):
-    def __init__(self, dim_stochastic, dim_treat, mtype='logcellkill', response_only=False, alpha1_type='linear'):
+    def __init__(self, dim_stochastic, dim_treat, dim_hidden = 300, mtype='logcellkill', response_only=False, alpha1_type='linear'):
         super(LogCellKill, self).__init__()
         self.dim_stochastic   = dim_stochastic
         self.dim_treat        = dim_treat
         self.mtype            = mtype
         self.rho              = nn.Parameter(torch.Tensor(dim_stochastic,))
-        if alpha1_type == 'linear': 
+        if alpha1_type == 'linear' or alpha1_type == 'quadratic' or alpha1_type == 'nl': 
             self.scale            = nn.Parameter(torch.Tensor(dim_stochastic,))
             self.controlfxn       = nn.Linear(dim_treat-1, dim_stochastic)
         elif alpha1_type == 'linear_fix': 
             self.scale        = nn.Parameter(torch.Tensor(1,))
             self.controlfxn   = nn.Linear(dim_treat-1, 1)
-        elif alpha1_type == 'nl': 
-            self.scale            = nn.Parameter(torch.Tensor(dim_stochastic,))
-            omodel             = nn.Sequential(nn.Linear(dim_treat-1, dim_hidden),nn.ReLU(True))
-            self.controlfxn = nn.Sequential(omodel, nn.Linear(dim_hidden, dim_stochastic)) 
+        # elif alpha1_type == 'nl': 
+        #     self.scale      = nn.Parameter(torch.Tensor(dim_stochastic,))
+        #     omodel          = nn.Sequential(nn.Linear(dim_treat-1, dim_hidden),nn.ReLU(True))
+        #     self.controlfxn = nn.Sequential(omodel, nn.Linear(dim_hidden, dim_stochastic)) 
             
         self.response_only = response_only
         if not response_only:

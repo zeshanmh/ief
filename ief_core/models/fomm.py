@@ -7,6 +7,7 @@ import torch.nn.init as init
 import torch.nn as nn
 
 from models.base import Model
+from distutils.util import strtobool
 from models.utils import *
 from models.ssm.inference import RNN_STInf, Attention_STInf
 from models.iefs.gated import GatedTransition
@@ -31,13 +32,14 @@ class FOMM(Model):
         super(FOMM, self).__init__()
         self.save_hyperparameters()
 
-    def init_model(self): 
+    def init_model(self):         
         mtype      = self.hparams['mtype']; otype = self.hparams['otype']
         alpha1_type = self.hparams['alpha1_type']
         dim_hidden = self.hparams['dim_hidden']
         dim_data   = self.hparams['dim_data']
         dim_base   = self.hparams['dim_base']
         dim_treat  = self.hparams['dim_treat']
+        add_stochastic = self.hparams['add_stochastic']
 
         # define the transition function 
         if mtype == 'linear':
@@ -48,7 +50,7 @@ class FOMM(Model):
             if dim_data !=16:
                 avoid_init = True
             self.model_mu   = GatedTransition(dim_data, dim_treat+dim_base, dim_hidden=dim_hidden, dim_input=dim_data+dim_treat+dim_base, \
-                                use_te = True, avoid_init = avoid_init, alpha1_type=alpha1_type, otype=otype)
+                                use_te = True, avoid_init = avoid_init, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic)
             self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)
         elif mtype == 'moe': 
             self.model_mu   = MofE(dim_data, dim_treat+dim_base, dim_input = dim_data+dim_treat+dim_base, num_experts=3, eclass='nl')
@@ -154,10 +156,11 @@ class FOMM(Model):
         parser.add_argument('--dim_hidden', type=int, default=300, help='hidden dimension for nonlinear model')
         parser.add_argument('--mtype', type=str, default='linear', help='transition function in FOMM')
         parser.add_argument('--C', type=float, default=.1, help='regularization strength')
-        parser.add_argument('--reg_all', type=bool, default=True, help='regularize all weights or only subset')    
+        parser.add_argument('--reg_all', type=strtobool, default=True, help='regularize all weights or only subset')    
         parser.add_argument('--reg_type', type=str, default='l1', help='regularization type')
         parser.add_argument('--alpha1_type', type=str, default='linear', help='alpha1 parameterization in TreatExp IEF')
         parser.add_argument('--otype', type=str, default='linear', help='final layer of GroMOdE IEF (linear, identity, nl)')
+        parser.add_argument('--add_stochastic', type=strtobool, default=False, help='conditioning alpha-1 of TEXP on S_[t-1]')
 
         return parser 
 

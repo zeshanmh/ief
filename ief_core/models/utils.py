@@ -10,10 +10,10 @@ from torch.utils.data import DataLoader, TensorDataset
 from torchcontrib.optim import SWA
 
 def get_masks(M):
-        m_t    = ((torch.flip(torch.cumsum(torch.flip(M.sum(-1), (1,)), 1), (1,))>1.)*1)
-        m_g_t  = (m_t.sum(-1)>1)*1.
-        lens   = m_t.sum(-1)
-        return m_t, m_g_t, lens
+    m_t    = ((torch.flip(torch.cumsum(torch.flip(M.sum(-1), (1,)), 1), (1,))>1.)*1)
+    m_g_t  = (m_t.sum(-1)>1)*1.
+    lens   = m_t.sum(-1)
+    return m_t, m_g_t, lens
     
 def masked_gaussian_nll_3d(x, mu, std, mask):
     nll        = 0.5*np.log(2*np.pi) + torch.log(std)+((mu-x)**2)/(2*std**2)
@@ -30,3 +30,20 @@ def apply_reg(p, reg_type='l2'):
 
 def pt_numpy(tensor):
     return tensor.detach().cpu().numpy()
+
+def calc_stats(preds, tensors):
+    B, X, A, M, Y, CE = tensors
+    if Y.shape[-1]>1:
+        Y_oh      = Y.detach().cpu().numpy()
+        bin_preds = self.prediction.detach().cpu().numpy()
+        Y_np      = bin_preds[np.argmax(Y_oh,-1)]
+    else:
+        Y_np      = Y.detach().cpu().numpy().ravel()
+    CE_np     = CE.detach().cpu().numpy().ravel()
+    preds_np  = preds.detach().cpu().numpy().ravel()
+    event_obs = (1.-CE_np).ravel()
+    idx       = np.where(event_obs>0)[0]
+    mse  = np.square(Y_np[idx]-preds_np[idx]).mean()
+    r2   = r2_score(Y_np[idx], preds_np[idx])
+    ci   = concordance_index(Y_np, preds_np, event_obs)
+    return mse, r2, ci

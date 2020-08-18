@@ -6,12 +6,16 @@ import pytorch_lightning as pl
 import sys 
 from lifelines.utils import concordance_index
 from sklearn.metrics import r2_score
+from pytorch_lightning.metrics.functional import f1_score, precision_recall, auroc
+from pytorch_lightning.metrics.sklearns import F1, Precision, Recall
 from torch.utils.data import DataLoader, TensorDataset
 from torchcontrib.optim import SWA
 sys.path.append('../data/ml_mmrf')
 sys.path.append('../data/')
 from ml_mmrf_v1.data import load_mmrf
 from synthetic.synthetic_data import load_synthetic_data_trt, load_synthetic_data_noisy
+from semi_synthetic.ss_data import *
+from models.utils import *
 
 class Model(pl.LightningModule): 
 
@@ -43,9 +47,13 @@ class Model(pl.LightningModule):
             dt = [k.repeat(nsamples,1) if k.dim()==2 else k.repeat(nsamples,1,1) for k in batch]
         else:
             dt = batch
-        # use KL annealing for DMM 
-        self.hparams['anneal'] = min(1, self.current_epoch/(self.hparams['max_epochs']*0.5))
-        _, loss  = self.forward(*dt, anneal = self.hparams['anneal']) 
+        # use KL annealing for SSM and SFOMM
+        if self.hparams['anneal'] != -1.: 
+            anneal = min(1, self.current_epoch/(self.hparams['max_epochs']*0.5))
+            self.hparams['anneal'] = anneal
+        else: 
+            anneal = 1.
+        _, loss  = self.forward(*dt, anneal = anneal) 
         return {'loss': loss}
 
     def training_epoch_end(self, outputs):  
@@ -54,7 +62,7 @@ class Model(pl.LightningModule):
         tensorboard_logs = {'train_loss': avg_loss}
         # only report anneal param in progress bar for SSM
         dict_ = {}
-        if self.hparams['model_name'] == 'ssm': 
+        if self.hparams['model_name'] == 'ssm' or self.hparams['model_name'] == 'sfomm': 
             dict_ = {'anneal': self.hparams['anneal']}
         return {'loss': avg_loss, 'log': tensorboard_logs, 'progress_bar': dict_}
 
@@ -71,6 +79,10 @@ class Model(pl.LightningModule):
                 batch_nll.append(nll_estimate)
             nll_estimate = np.mean(batch_nll)
             '''
+        if self.hparams['eval_type'] != 'nelbo': 
+            preds, _ = self.predict(*batch)
+            return self.compute_metrics(preds, batch, (nelbo, nll, kl))
+            
         return {'val_loss': nelbo, 'nll': nll, 'kl': kl}
 
     def validation_epoch_end(self, outputs): 
@@ -80,7 +92,46 @@ class Model(pl.LightningModule):
         avg_nll   = torch.stack(nlls).mean()
         avg_kl    = torch.stack(kls).mean()
         tensorboard_logs = {'val_NELBO': avg_nelbo, 'val_nll': avg_nll, 'val_kl': avg_kl}
+
+        if self.hparams['eval_type'] != 'nelbo': 
+            return self.average_metrics(tensorboard_logs, outputs)
+
+        # self.logger.log_metrics(tensorboard_logs)
         return {'val_loss': avg_nelbo, 'log': tensorboard_logs, 'progress_bar': tensorboard_logs}
+
+    def average_metrics(self, tensorboard_logs, outputs):         
+        avg_nelbo = tensorboard_logs['val_NELBO']
+        if self.hparams['eval_type'] == 'mse': 
+            avg_mse = np.mean([x['mse'] for x in outputs])
+            tensorboard_logs['mse'] = avg_mse
+            return {'val_loss': avg_nelbo, 'mse': avg_mse, 'log': tensorboard_logs, 'progress_bar': tensorboard_logs}
+        elif self.hparams['eval_type'] == 'f1': 
+            avg_f1 = torch.stack([x['F1'] for x in outputs]).mean()
+            avg_pr = torch.stack([x['precision'] for x in outputs]).mean()
+            avg_re = torch.stack([x['recall'] for x in outputs]).mean()
+            tensorboard_logs['f1'] = avg_f1; tensorboard_logs['precision'] = avg_pr; tensorboard_logs['recall'] = avg_re
+            return {'val_loss': avg_nelbo, 'F1': avg_f1, 'Pr': avg_pr, 'Re': avg_re, 'log': tensorboard_logs, 'progress_bar': tensorboard_logs}
+        elif self.hparams['eval_type'] == 'auc': 
+            avg_auc = torch.stack([x['auc'] for x in outputs]).mean()
+            tensorboard_logs['auc'] = avg_auc
+            return {'val_loss': avg_nelbo, 'auc': avg_auc, 'log': tensorboard_logs, 'progress_bar': tensorboard_logs}
+
+    def compute_metrics(self, preds, tensors, metrics):
+        nelbo, nll, kl    = metrics 
+        B, X, A, M, Y, CE = tensors
+        if self.hparams['eval_type'] == 'mse': 
+            mse, r2, ci = calc_stats(preds, tensors)
+            return {'val_loss': nelbo, 'nll': nll, 'kl': kl, 'mse': mse, 'r2': r2, 'ci': ci}
+        elif self.hparams['eval_type'] == 'f1': 
+            f1 = self.f1(preds.argmax(dim=1), Y)
+            p  = self.precision(preds.argmax(dim=1), Y)
+            r  = self.recall(preds.argmax(dim=1), Y)
+            return {'val_loss': nelbo, 'nll': nll, 'kl': kl, 'F1': f1, 'precision': p, 'recall': r}
+        elif self.hparams['eval_type'] == 'auc': 
+            auc = auroc(preds.argmax(dim=1), Y)
+            return {'val_loss': nelbo, 'nll': nll, 'kl': kl, 'auc': auc}
+        else: 
+            raise ValueError('bad metric specified...')
 
     def configure_optimizers(self): 
         opt = torch.optim.Adam(self.parameters(), lr=self.hparams['lr']) 
@@ -93,9 +144,9 @@ class Model(pl.LightningModule):
         fold = self.hparams['fold']
         if self.hparams['dataset'] == 'mm': 
             ddata = load_mmrf(fold_span = [fold], \
-                              digitize_K = 20, \
+                              digitize_K = 0, \
                               digitize_method = 'uniform', \
-                              suffix='_2mos')
+                              suffix='_2mos_tr')
 
         elif self.hparams['dataset'] == 'synthetic': 
             nsamples        = {'train':self.hparams['nsamples_syn'], 'valid':1000, 'test':200}
@@ -112,18 +163,41 @@ class Model(pl.LightningModule):
                                             num_trt=num_trt, \
                                             sub=True)
 
-        self.hparams['dim_base']  = ddata[fold]['train']['b'].shape[-1]
-        self.hparams['dim_data']  = ddata[fold]['train']['x'].shape[-1]
-        self.hparams['dim_treat'] = ddata[fold]['train']['a'].shape[-1]
+        if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic': 
+            self.hparams['dim_base']  = ddata[fold]['train']['b'].shape[-1]
+            self.hparams['dim_data']  = ddata[fold]['train']['x'].shape[-1]
+            self.hparams['dim_treat'] = ddata[fold]['train']['a'].shape[-1]
+
+        if self.hparams['dataset'] == 'semi_synthetic': 
+            ddata = load_ss_data(self.hparams['nsamples_syn'], \
+                                 add_missing=self.hparams['ss_missing'], \
+                                 gen_fly=True, \
+                                 in_sample_dist=self.hparams['ss_in_sample_dist'])
+            self.hparams['dim_base']  = ddata['train']['B'].shape[-1]
+            self.hparams['dim_data']  = ddata['train']['X'].shape[-1]
+            self.hparams['dim_treat'] = ddata['train']['A'].shape[-1]
+         
+        if self.hparams['eval_type'] == 'f1': 
+            self.f1 = F1(average='weighted')
+            self.precision = Precision(average='weighted')
+            self.recall = Recall(average='weighted')
+
         self.ddata = ddata 
         self.init_model()
         
-    def load_helper(self, tvt):
+    def load_helper(self, tvt, device=None):
         fold = self.hparams['fold']; batch_size = self.hparams['bs']
-        B  = torch.from_numpy(self.ddata[fold][tvt]['b'].astype('float32'))
-        X  = torch.from_numpy(self.ddata[fold][tvt]['x'].astype('float32'))
-        A  = torch.from_numpy(self.ddata[fold][tvt]['a'].astype('float32'))
-        M  = torch.from_numpy(self.ddata[fold][tvt]['m'].astype('float32'))
+
+        if device is not None: 
+            B  = torch.from_numpy(self.ddata[fold][tvt]['b'].astype('float32')).to(device)
+            X  = torch.from_numpy(self.ddata[fold][tvt]['x'].astype('float32')).to(device)
+            A  = torch.from_numpy(self.ddata[fold][tvt]['a'].astype('float32')).to(device)
+            M  = torch.from_numpy(self.ddata[fold][tvt]['m'].astype('float32')).to(device)
+        else: 
+            B  = torch.from_numpy(self.ddata[fold][tvt]['b'].astype('float32'))
+            X  = torch.from_numpy(self.ddata[fold][tvt]['x'].astype('float32'))
+            A  = torch.from_numpy(self.ddata[fold][tvt]['a'].astype('float32'))
+            M  = torch.from_numpy(self.ddata[fold][tvt]['m'].astype('float32'))
 
         y_vals   = self.ddata[fold][tvt]['ys_seq'][:,0].astype('float32')
         idx_sort = np.argsort(y_vals)
@@ -131,8 +205,13 @@ class Model(pl.LightningModule):
             print ('using digitized y')
             Y  = torch.from_numpy(self.ddata[fold][tvt]['digitized_y'].astype('float32'))
         else:
-            Y  = torch.from_numpy(self.ddata[fold][tvt]['ys_seq'][:,[0]].astype('float32'))
-        CE = torch.from_numpy(self.ddata[fold][tvt]['ce'].astype('float32'))
+            Y  = torch.from_numpy(self.ddata[fold][tvt]['ys_seq'][:,[0]]).squeeze()
+
+        if device is not None: 
+            Y = Y.to(device)
+            CE = torch.from_numpy(self.ddata[fold][tvt]['ce'].astype('float32')).to(device)
+        else: 
+            CE = torch.from_numpy(self.ddata[fold][tvt]['ce'].astype('float32'))
 
         data        = TensorDataset(B[idx_sort], X[idx_sort], A[idx_sort], M[idx_sort], Y[idx_sort], CE[idx_sort])
         data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
@@ -140,11 +219,17 @@ class Model(pl.LightningModule):
 
     @pl.data_loader
     def train_dataloader(self):
-        _, train_loader = self.load_helper(tvt='train')
+        if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
+            _, train_loader = self.load_helper(tvt='train')
+        elif self.hparams['dataset'] == 'semi_synthetic': 
+            _, train_loader = load_ss_helper(self.ddata, tvt='train', bs=self.hparams['bs'])
         return train_loader
 
     @pl.data_loader
     def val_dataloader(self):
-        _, valid_loader = self.load_helper(tvt='valid')
+        if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
+            _, valid_loader = self.load_helper(tvt='valid')
+        elif self.hparams['dataset'] == 'semi_synthetic': 
+            _, valid_loader = load_ss_helper(self.ddata, tvt='valid', bs=self.hparams['bs'])
         return valid_loader
 

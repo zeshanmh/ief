@@ -7,6 +7,7 @@ import torch.nn.init as init
 import torch.nn as nn
 
 from models.base import Model
+from distutils.util import strtobool
 from models.utils import *
 from models.ssm.inference import RNN_STInf, Attention_STInf
 from models.iefs.gated import GatedTransition
@@ -40,13 +41,15 @@ class GRU(Model):
         dim_data    = self.hparams['dim_data']
         dim_base    = self.hparams['dim_base']
         dim_treat   = self.hparams['dim_treat']
+        alpha1_type = self.hparams['alpha1_type']; otype = self.hparams['otype']
+        add_stochastic = self.hparams['add_stochastic']
 
         if mtype   == 'rnn':
             self.model   = nn.RNN(dim_data+dim_treat+dim_base, dim_hidden, 1, batch_first = True, dropout = dropout)
         elif mtype == 'gru':
             self.model   = nn.GRU(dim_data+dim_treat+dim_base, dim_hidden, 1, batch_first = True, dropout = dropout)
         elif mtype == 'pkpd_gru':
-            self.model   = GRULayer(PKPD_GRU, dim_data, dim_treat, dim_base, dim_hidden)
+            self.model   = GRULayer(PKPD_GRU, dim_data, dim_treat, dim_base, dim_hidden, -1, alpha1_type, otype, add_stochastic)
         else:
             raise ValueError('Bad RNN model')
 
@@ -124,7 +127,7 @@ class GRU(Model):
         
     def sample(self, T_forward, X, A, B, hidden = None):
         if hidden is None:
-            hidden = Variable(torch.zeros(1, X.shape[0], self.dh)).to(X.device)
+            hidden = Variable(torch.zeros(1, X.shape[0], self.hparams['dim_hidden'])).to(X.device)
         inp        = torch.cat([X[:,[0],:], A[:,[0],:], B[:,None,:]],-1)
         mtype      = self.hparams['mtype']
         with torch.no_grad():
@@ -178,10 +181,11 @@ class GRU(Model):
         parser.add_argument('--utype', type=str, default='linear', help='effect of treatments for RNN')
         parser.add_argument('--dropout', type=float, default=0.)
         parser.add_argument('--C', type=float, default=.1, help='regularization strength')
-        parser.add_argument('--reg_all', type=bool, default=True, help='regularize all weights or only subset')    
+        parser.add_argument('--reg_all', type=strtobool, default=True, help='regularize all weights or only subset')    
         parser.add_argument('--reg_type', type=str, default='l1', help='regularization type')
         parser.add_argument('--alpha1_type', type=str, default='linear', help='alpha1 parameterization in TreatExp IEF')
         parser.add_argument('--otype', type=str, default='linear', help='final layer of GroMOdE IEF (linear, identity, nl)')
+        parser.add_argument('--add_stochastic', type=strtobool, default=False, help='conditioning alpha-1 of TEXP on S_[t-1]')
 
         return parser 
 
@@ -206,7 +210,7 @@ class GRULayer(nn.Module):#jit.ScriptModule):
 
 class PKPD_GRU(nn.Module):#jit.ScriptModule):
     __constants__ = ['dim_data','dim_treat','dim_base','dim_hidden', 'dim_subtype']
-    def __init__(self, dim_data, dim_treat, dim_base, dim_hidden, dim_subtype=-1):
+    def __init__(self, dim_data, dim_treat, dim_base, dim_hidden, dim_subtype=-1, alpha1_type='linear', otype='linear', add_stochastic=False):
         super(PKPD_GRU, self).__init__()
         
         self.dim_data    = dim_data
@@ -214,14 +218,17 @@ class PKPD_GRU(nn.Module):#jit.ScriptModule):
         self.dim_base    = dim_base
         self.dim_hidden  = dim_hidden
         self.dim_subtype = dim_subtype
+        
         if self.dim_subtype == -1: 
             self.x2h  = nn.Linear(dim_data+dim_treat+dim_base,  2 * dim_hidden, bias=True)
             self.te2h = nn.Linear(dim_data+dim_treat+dim_base, 3 * dim_hidden, bias=True)
-            self.te   = GatedTransition(dim_data+dim_treat+dim_base, dim_treat+dim_base, response_only = True)
+            self.te   = GatedTransition(dim_data+dim_treat+dim_base, dim_treat+dim_base, response_only = True, \
+                alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic)
         else: 
             self.x2h  = nn.Linear(dim_data+dim_treat+dim_base+dim_subtype,  2 * dim_hidden, bias=True)
             self.te2h = nn.Linear(dim_data+dim_treat+dim_base+dim_subtype, 3 * dim_hidden, bias=True)
-            self.te   = GatedTransition(dim_data+dim_treat+dim_base+dim_subtype, dim_treat+dim_base, dim_subtype=dim_subtype, response_only = True)
+            self.te   = GatedTransition(dim_data+dim_treat+dim_base+dim_subtype, dim_treat+dim_base, dim_subtype=dim_subtype, \
+                response_only = True, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic)
 
         self.h2h  = nn.Linear(dim_hidden,  3 * dim_hidden, bias=True)
         self.reset_parameters()

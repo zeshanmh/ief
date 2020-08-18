@@ -21,7 +21,7 @@ def te_matrix():
    
 class GatedTransition(nn.Module):
     def __init__(self, dim_stochastic, dim_treat, dim_hidden = 300, dim_output = -1, dim_subtype = -1, dim_input = -1, use_te = False, \
-                 response_only = False, avoid_init = False, dataset = 'mm', otype = 'linear', alpha1_type = 'linear'):
+                 response_only = False, avoid_init = False, dataset = 'mm', otype = 'linear', alpha1_type = 'linear', add_stochastic=False):
         super(GatedTransition, self).__init__()
         self.response_only    = response_only
         if dim_input == -1: 
@@ -60,7 +60,7 @@ class GatedTransition(nn.Module):
         else: 
             self.alphas       = nn.Parameter(torch.Tensor(dim_stochastic,3))
         self.logcell      = LogCellKill(dim_stochastic, dim_treat, mtype='logcellkill_1', response_only = True, alpha1_type=alpha1_type)
-        self.treatment_exp= TreatmentExponential(dim_stochastic, dim_treat, response_only = True, alpha1_type=alpha1_type)
+        self.treatment_exp= TreatmentExponential(dim_stochastic, dim_treat, response_only = True, alpha1_type=alpha1_type, add_stochastic=add_stochastic)
         self.reset_parameters()
     
     def reset_parameters(self):
