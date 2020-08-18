@@ -1,16 +1,22 @@
-fname: 'test_ssm' # name of the run; will save in tb_logs/test_fomm
+fname: 'ssm_pkpd_fold1_BEST' # name of the run; will save in tb_logs/test_fomm
 parameters:   
   model_name: ['ssm']
   dataset: ['mm']
   fold: [1]
+  dim_stochastic: [48]
   dim_hidden: [300]
-  # mtype: ['linear']
   etype: ['lin']
-  ttype: ['lin']
+  ttype: ['gated']
   bs: [600]
-  C: [0.1]
+  C: [0.01]
   reg_all: [True]
   reg_type: ['l1']
-  checkpoint_callback: [False] # switch to True if you want to save best model
-  logger: [False]
-  max_epochs: [1000]
+  alpha1_type: ['linear']
+  add_stochastic: [False]
+  otype: ['linear']
+  checkpoint_callback: [True] # switch to True if you want to save best model
+  logger: [True]
+  check_val_every_n_epoch: [1]
+  max_epochs: [15000]
+  progress_bar_refresh_rate: [1]
+  gpu_id: [0]
