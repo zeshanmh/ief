@@ -1,0 +1,22 @@
+fname: 'ssm_mm_alpha1_NL_fold0' # name of the run; will save in tb_logs/test_fomm
+parameters:   
+  model_name: ['ssm']
+  dataset: ['mm']
+  fold: [0]
+  dim_stochastic: [48,16] 
+  dim_hidden: [300]
+  etype: ['lin']
+  ttype: ['gated']
+  bs: [600]
+  C: [0.01, 0.1] 
+  reg_all: [True, False] 
+  reg_type: ['l1', 'l2'] 
+  alpha1_type: ['nl']
+  otype: ['linear']
+  checkpoint_callback: [False] # switch to True if you want to save best model
+  logger: [True]
+  check_val_every_n_epoch: [10]
+  max_epochs: [15000]
+  progress_bar_refresh_rate: [1]
+  gpu_id: [3]
+  add_stochastic: [True]

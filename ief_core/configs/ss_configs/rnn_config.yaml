@@ -1,0 +1,23 @@
+fname: 'rnn_semi_synthetic_indist_sc_missing_alt' # name of the run; will save in tb_logs/test_fomm
+parameters:   
+  model_name: ['gru']
+  dataset: ['semi_synthetic']
+  fold: [1]
+  nsamples_syn: [1000,1500,2000]
+  dim_hidden: [250,500]
+  mtype: ['gru']
+  bs: [600]
+  C: [0.01,0.1]
+  reg_all: [True,False]
+  reg_type: ['l1','l2']
+  alpha1_type: ['linear']
+  otype: ['linear']
+  checkpoint_callback: [False] # switch to True if you want to save best model
+  logger: [True]
+  check_val_every_n_epoch: [10]
+  max_epochs: [1000]
+  progress_bar_refresh_rate: [1]
+  gpu_id: [3]
+  add_stochastic: [False]
+  ss_missing: [True]
+  ss_in_sample_dist: [True]
