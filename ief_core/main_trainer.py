@@ -40,8 +40,6 @@ def main(args):
     trainer.fit(model)
 
 if __name__ == '__main__':
-    seed_everything(0)
-
     parser = ArgumentParser()
 
     # figure out which model to use and other basic params
@@ -61,9 +59,12 @@ if __name__ == '__main__':
     parser.add_argument('--ss_in_sample_dist', type=strtobool, default=False, help='whether to use mm training patients to generate validation/test set in semi synthetic data')
     parser.add_argument('--bs', default=600, type=int, help='batch size')
     parser.add_argument('--fold', default=1, type=int)
+    parser.add_argument('--seed', default=0, type=int)
 
     # THIS LINE IS KEY TO PULL THE MODEL NAME
     temp_args, _ = parser.parse_known_args()
+
+    seed_everything(temp_args.seed)
 
     # let the model add what it wants
     if temp_args.model_name == 'fomm': 
