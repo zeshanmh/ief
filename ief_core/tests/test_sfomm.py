@@ -21,9 +21,26 @@ from models.sfomm import SFOMM
 from models.utils import *
 
 # ave_diff test, linear, gated, rnn inftype
+def return_per_class_acc(y_true, y_pred): 
+    accs = []
+    for i in range(max(y_true)+1): 
+        idxs = np.where(y_true == i)
+        t = y_true[idxs]
+        p = y_pred[idxs]
+        acc = sum(t == p) / len(t)
+        accs.append(acc)
+    return accs
+
 def test_sfomm_texp_mm(): 
     seed_everything(0)
-
+    
+    configs = [
+        (1000, 'gated', 'rnn', 'l2', 0.01, 48, True)
+#         (1000, 'linear', 'rnn', 'l2', 0.01, 48, True),
+#         (1000, 'gated', 'birnn', 'l2', 0.01, 48, True),
+#         (1000, 'linear', 'birnn', 'l2', 0.01, 48, True)
+    ]
+    
     parser = ArgumentParser()
     parser.add_argument('--model_name', type=str, default='sfomm', help='fomm, ssm, or gru')
     parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
@@ -34,9 +51,9 @@ def test_sfomm_texp_mm():
     parser.add_argument('--nsamples_syn', default=50, type=int, help='number of training samples for synthetic data')
     parser.add_argument('--optimizer_name', type=str, default='adam')
     parser.add_argument('--dataset', default='mm', type=str)
-    parser.add_argument('--loss_type', type=str, default='semisup')
-    parser.add_argument('--eval_type', type=str, default='auc')
-    parser.add_argument('--bs', default=600, type=int, help='batch size')
+    parser.add_argument('--loss_type', type=str, default='unsup')
+    parser.add_argument('--eval_type', type=str, default='nelbo')
+    parser.add_argument('--bs', default=200, type=int, help='batch size')
     parser.add_argument('--fold', default=1, type=int)
 
     # THIS LINE IS KEY TO PULL THE MODEL NAME
@@ -47,49 +64,63 @@ def test_sfomm_texp_mm():
     parser = Trainer.add_argparse_args(parser)
 
     # parse args and convert to dict
-    args = parser.parse_args()
-    args.max_epochs = 10
-    args.mtype      = 'gated'
-    args.alpha1_type = 'linear'
-    args.inftype     = 'rnn'
-    args.reg_type    = 'l2'
-    args.C           = 0.01
-    args.dim_stochastic= 48
-    args.reg_all     = False
-    args.add_stochastic = False
-    dict_args = vars(args)
+    
+    for k,config in enumerate(configs): 
+        print(f'running config: {config}')
+        max_epochs, mtype, inftype, reg_type, C, ds, reg_all = config
+        
+        args = parser.parse_args()
+        args.max_epochs = max_epochs
+        args.mtype      = mtype
+        args.alpha1_type = 'linear'
+        args.inftype     = inftype
+        args.reg_type    = reg_type
+        args.C           = C
+        args.dim_stochastic= ds
+        args.reg_all     = reg_all
+        args.add_stochastic = False
+        dict_args = vars(args)
 
-    # initialize FOMM w/ args and train 
-    model = SFOMM(**dict_args)
-    early_stop_callback = EarlyStopping(
-       monitor='auc',
-       min_delta=0.00,
-       patience=50,
-       verbose=False,
-       mode='max'
-    )
-    trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=False, gpus=[2], early_stop_callback=early_stop_callback)
-    trainer.fit(model)
+        # initialize FOMM w/ args and train 
+        model = SFOMM(**dict_args)
+        checkpoint_callback = ModelCheckpoint(filepath='./checkpoints/sfomm_gated')
+        early_stop_callback = EarlyStopping(
+           monitor='val_loss',
+           min_delta=0.00,
+           patience=10,
+           verbose=False,
+           mode='min'
+        )
+        trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=checkpoint_callback, gpus=[2], early_stop_callback=False)
+        trainer.fit(model)
 
-    # evaluate on validation set; this should match what we were getting with the old codebase (after 100 epochs)
-    if torch.cuda.is_available():
-        device = torch.device('cuda:2')
-    else:
-        device  = torch.device('cpu')
-    _, valid_loader = model.load_helper('valid', device=device)
-    preds, _ = model.predict(*valid_loader.dataset.tensors)
+        # evaluate on validation set; this should match what we were getting with the old codebase (after 100 epochs)
+        if torch.cuda.is_available():
+            device = torch.device('cuda:2')
+        else:
+            device  = torch.device('cpu')
+        _, valid_loader = model.load_helper('valid', device=device, oversample=False)
 
-    B, X, A, M, Y, CE = valid_loader.dataset.tensors
-    from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
-    preds  = pt_numpy(preds.argmax(dim=1))
-    print(preds); print(Y)
-    f1     = f1_score(pt_numpy(Y), preds, average='weighted')
-    precision = precision_score(pt_numpy(Y), preds, average='weighted')
-    recall = recall_score(pt_numpy(Y), preds, average='weighted')
-    auc    = roc_auc_score(pt_numpy(Y), preds, average='weighted')
+        nelbos = []
+        for i in range(50): 
+            (nelbo, nll, kl, _), _ = model.forward(*valid_loader.dataset.tensors, anneal = 1.)
+            nelbos.append(nelbo.item())
+        print(f'final nelbo for {config} (config {k+1}): mean: {np.mean(nelbos)}, std: {np.std(nelbos)}')
+    # preds, _ = model.predict_ord(*valid_loader.dataset.tensors)
 
-    print(f'F1: {f1}, Precision: {precision}, Recall: {recall}, AUC: {auc}')
-    return preds
+    # B, X, A, M, Y, CE = valid_loader.dataset.tensors
+    # from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
+    # preds  = pt_numpy(preds.argmax(dim=1))
+    # print(preds); print(Y)
+    # f1     = f1_score(pt_numpy(Y), preds, average='weighted')
+    # precision = precision_score(pt_numpy(Y), preds, average='weighted')
+    # recall = recall_score(pt_numpy(Y), preds, average='weighted')
+    # auc    = roc_auc_score(pt_numpy(Y), preds, average='weighted')
+    # # auc=0.
+    # acc_class = return_per_class_acc(pt_numpy(Y), preds)
+
+    # print(f'F1: {f1}, Precision: {precision}, Recall: {recall}, AUC: {auc}, per_class_acc: {acc_class}')
+    # return preds
     
 
 def test_sfomm_texp_syn(): 

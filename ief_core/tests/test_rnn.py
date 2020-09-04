@@ -9,6 +9,7 @@ from sklearn.metrics import r2_score
 from torch.utils.data import DataLoader, TensorDataset
 from torchcontrib.optim import SWA
 from pytorch_lightning import Trainer, seed_everything
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from argparse import ArgumentParser
 from distutils.util import strtobool
 sys.path.append('../')
@@ -77,14 +78,21 @@ def test_gru():
     assert (nelbo.item() - 146.43) < 1e-1
 
 def run_gru_ss(): 
-    seed_everything(0)
     model_configs = [ 
-        (1000, 'gru', 250, 0.01, False, 'l1'), 
-        (1000, 'pkpd_gru', 500, 0.01, True, 'l2'), 
-        (1500, 'gru', 500, 0.01, False, 'l1'), 
-        (1500, 'pkpd_gru', 500, 0.01, False, 'l2'), 
-        (2000, 'gru', 250, 0.01, False, 'l1'),
-        (2000, 'pkpd_gru', 500, 0.01, False, 'l1')
+        (1, 21000, 'gru', 500, 0.01, True, 'l1', 1e-5, 'rmsprop'),
+        (1, 21000, 'gru', 500, 0.01, True, 'l1', 1e-4, 'rmsprop'),
+        (1, 21000, 'gru', 500, 0.01, True, 'l1', 1e-3, 'rmsprop'),
+        (1, 21000, 'gru', 500, 0.01, True, 'l1', 1e-2, 'rmsprop'),
+        (1, 21000, 'gru', 500, 0.01, True, 'l1', 1e-5, 'adam'),
+        (1, 21000, 'gru', 500, 0.01, True, 'l1', 1e-4, 'adam'),
+        (1, 21000, 'gru', 500, 0.01, True, 'l1', 5e-4, 'adam'),
+        (1, 21000, 'gru', 500, 0.01, True, 'l1', 1e-2, 'adam')
+        # (2, 1000, 'gru', 250, 0.01, True, 'l1'), 
+        # (2, 1500, 'gru', 250, 0.01, False, 'l1'), 
+        # (1, 2000, 'gru', 250, 0.01, False, 'l1'),
+        # (1, 1000, 'pkpd_gru', 500, 0.01, True, 'l2'), 
+        # (1, 1500, 'pkpd_gru', 500, 0.01, True, 'l2'), 
+        # (1, 2000, 'pkpd_gru', 500, 0.01, True, 'l2')
     ]
     parser = ArgumentParser()
     parser.add_argument('--model_name', type=str, default='gru', help='fomm, ssm, or gru')
@@ -98,8 +106,9 @@ def run_gru_ss():
     parser.add_argument('--dataset', default='semi_synthetic', type=str)
     parser.add_argument('--eval_type', type=str, default='nelbo')
     parser.add_argument('--loss_type', type=str, default='unsup')
-    parser.add_argument('--bs', default=600, type=int, help='batch size')
+    parser.add_argument('--bs', default=2000, type=int, help='batch size')
     parser.add_argument('--fold', default=1, type=int)
+    parser.add_argument('--seed', default=1, type=int)
     parser.add_argument('--ss_missing', type=strtobool, default=True, help='whether to add missing data in semi synthetic setup or not')
     parser.add_argument('--ss_in_sample_dist', type=strtobool, default=True, help='whether to use mm training patients to generate validation/test set in semi synthetic data')
 
@@ -114,7 +123,9 @@ def run_gru_ss():
     args = parser.parse_args()
 
     for k,model_config in enumerate(model_configs): 
-        nsamples_syn, mtype, dim_hidden, C, reg_all, reg_type = model_config
+        seed, nsamples_syn, mtype, dim_hidden, C, reg_all, reg_type, lr, opt_name = model_config
+        seed_everything(seed)
+        args.lr = lr; args.optimizer_name = opt_name
         args.max_epochs = 1000
         args.nsamples_syn = nsamples_syn
         args.mtype        = mtype
@@ -128,12 +139,12 @@ def run_gru_ss():
         model = GRU(**dict_args)
         in_sample_dist = model.hparams.ss_in_sample_dist; add_missing = model.hparams.ss_missing
         print(f'[RUNNING] model config {k+1}: N = {args.nsamples_syn}, mtype = {args.mtype}, C = {args.C}, reg_all = {args.reg_all}, reg_type = {args.reg_type}, in_sample_dist = {in_sample_dist}, add_missing = {add_missing}')
-        trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=False, gpus=[0], check_val_every_n_epoch=10)
+        trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=False, gpus=[2], check_val_every_n_epoch=10)
         trainer.fit(model)
 
         # evaluate on validation set; this should match what we were getting with the old codebase (after 100 epochs)
         if torch.cuda.is_available():
-            device = torch.device('cuda')
+            device = torch.device('cuda:2')
         else:
             device  = torch.device('cpu')
         ddata = load_ss_data(model.hparams['nsamples_syn'], gen_fly=True, eval_mult=200, in_sample_dist=in_sample_dist, add_missing=add_missing)
@@ -148,20 +159,17 @@ def run_gru_ss():
                 batch_nelbos.append(nelbo)
             # (nelbo, nll, kl, _), _ = model.forward(*valid_loader.dataset.tensors, anneal = 1.)
             nelbos.append(np.mean(batch_nelbos))
-        # ddata = model.ddata 
-        # nelbos = []
-        # for i in range(5):
-        #     import pdb; pdb.set_trace()
-        #     _, valid_loader = load_ss_helper(ddata, tvt='valid', bs=model.hparams['bs'], device=device, valid_fold=i)
-        #     (nelbo, nll, kl, _), _ = model.forward(*valid_loader.dataset.tensors, anneal = 1.)
-        #     nelbos.append(nelbo.item())
         print(f'[COMPLETE] model config {k+1}: mean nelbo: {np.mean(nelbos)}, std nelbo: {np.std(nelbos)}')
         print()
 
 
 def test_gru_pkpd(): 
     seed_everything(0)
-
+    
+    configs = [
+        (1000, 'gru', 500, 0.01, True, 'l2')
+#         (1000, 'gru', 250, 0.01, True, 'l2')
+    ]
     parser = ArgumentParser()
     parser.add_argument('--model_name', type=str, default='gru', help='fomm, ssm, or gru')
     parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
@@ -173,8 +181,8 @@ def test_gru_pkpd():
     parser.add_argument('--optimizer_name', type=str, default='adam')
     parser.add_argument('--dataset', default='mm', type=str)
     parser.add_argument('--eval_type', type=str, default='nelbo')
-    parser.add_argument('--loss_type', type=str, default='semisup')
-    parser.add_argument('--bs', default=600, type=int, help='batch size')
+    parser.add_argument('--loss_type', type=str, default='unsup')
+    parser.add_argument('--bs', default=200, type=int, help='batch size')
     parser.add_argument('--fold', default=1, type=int)
 
     # THIS LINE IS KEY TO PULL THE MODEL NAME
@@ -183,25 +191,43 @@ def test_gru_pkpd():
     # add rest of args from FOMM and base trainer
     parser = GRU.add_model_specific_args(parser)
     parser = Trainer.add_argparse_args(parser)
+    
+    for k,config in enumerate(configs): 
+        print(f'running config: {config}')
+        max_epochs, mtype, dh, C, reg_all, reg_type = config
+        # parse args and convert to dict
+        args = parser.parse_args()
+        args.max_epochs = max_epochs
+        args.mtype      = mtype
+        args.dim_hidden = dh
+        args.reg_type   = reg_type
+        args.C          = C
+        args.reg_all    = reg_all
+        args.alpha1_type = 'linear'
+        args.add_stochastic = False
+        dict_args = vars(args)
 
-    # parse args and convert to dict
-    args = parser.parse_args()
-    args.max_epochs = 100
-    args.mtype      = 'pkpd_gru'
-    args.dim_hidden = 500
-    args.alpha1_type = 'linear'
-    args.add_stochastic = False
-    dict_args = vars(args)
+        # initialize FOMM w/ args and train 
+        model = GRU(**dict_args)
+        early_stop_callback = EarlyStopping(
+           monitor='val_loss',
+           min_delta=0.00,
+           patience=10,
+           verbose=False,
+           mode='min'
+        )
+        trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=False, early_stop_callback=early_stop_callback)
+        trainer.fit(model)
 
-    # initialize FOMM w/ args and train 
-    model = GRU(**dict_args)
-    trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=False)
-    trainer.fit(model)
-
-    # evaluate on validation set; this should match what we were getting with the old codebase (after 100 epochs)
-    valid_loader = model.val_dataloader()
-    (nelbo, nll, kl, _), _ = model.forward(*valid_loader.dataset.tensors, anneal = 1.)
-    assert (nelbo.item() - 183.759) < 1e-1
+        # evaluate on validation set; this should match what we were getting with the old codebase (after 100 epochs)
+        valid_loader = model.val_dataloader()
+        nelbos = []
+        for i in range(50): 
+            (nelbo, nll, kl, _), _ = model.forward(*valid_loader.dataset.tensors, anneal = 1.)
+            nelbos.append(nelbo.item())
+        print(f'final nll for {config} (config {k+1}): mean: {np.mean(nelbos)}, std: {np.std(nelbos)}')
+#     assert (nelbo.item() - 183.759) < 1e-1
 
 if __name__ == '__main__':
     run_gru_ss()
+    # test_gru_pkpd()

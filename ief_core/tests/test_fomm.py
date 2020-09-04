@@ -9,6 +9,7 @@ from sklearn.metrics import r2_score
 from torch.utils.data import DataLoader, TensorDataset
 from torchcontrib.optim import SWA
 from pytorch_lightning import Trainer, seed_everything
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from argparse import ArgumentParser
 sys.path.append('../')
 sys.path.append('../../data/ml_mmrf')
@@ -76,7 +77,10 @@ def test_fomm_linear():
 
 def test_fomm_gated(): 
     seed_everything(0)
-
+    
+    configs = [ 
+        (10000, 'gated', 0.01, True, 'l2')
+    ]
     parser = ArgumentParser()
     parser.add_argument('--model_name', type=str, default='fomm', help='fomm, ssm, or gru')
     parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
@@ -98,32 +102,51 @@ def test_fomm_gated():
     # add rest of args from FOMM and base trainer
     parser = FOMM.add_model_specific_args(parser)
     parser = Trainer.add_argparse_args(parser)
+    
+    for k,config in enumerate(configs): 
+        print(f'running config: {config}')
+        max_epochs, mtype, C, reg_all, reg_type = config
+        
+        # parse args and convert to dict
+        args = parser.parse_args()
+        args.max_epochs = max_epochs
+        args.dim_hidden = 300
+        args.mtype      = mtype
+        args.C = C; args.reg_all = reg_all; args.reg_type = reg_type
+        args.alpha1_type = 'linear'
+        args.add_stochastic = False
+        dict_args = vars(args)
 
-    # parse args and convert to dict
-    args = parser.parse_args()
-    args.max_epochs = 100
-    args.dim_hidden = 300
-    args.mtype      = 'gated'
-    args.alpha1_type = 'linear'
-    args.add_stochastic = False
-    dict_args = vars(args)
+        # initialize FOMM w/ args and train 
+        model = FOMM(**dict_args)
+        checkpoint_callback = ModelCheckpoint(filepath='./checkpoints/fomm_gated')
+        early_stop_callback = EarlyStopping(
+           monitor='val_loss',
+           min_delta=0.00,
+           patience=10,
+           verbose=False,
+           mode='min'
+        )
+        trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, \
+                        checkpoint_callback=checkpoint_callback, early_stop_callback=early_stop_callback)
+        trainer.fit(model)
 
-    # initialize FOMM w/ args and train 
-    model = FOMM(**dict_args)
-    trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=False)
-    trainer.fit(model)
+        # evaluate on validation set; this should match what we were getting with the old codebase (after 100 epochs)
+        valid_loader = model.val_dataloader()
+        nelbos = []
+        for i in range(50):
+            (nelbo, nll, kl, _), _ = model.forward(*valid_loader.dataset.tensors, anneal = 1.)
+            nelbos.append(nelbo.item())
+        print(f'final nelbo for {config} (config {k+1}): mean: {np.mean(nelbos)}, std: {np.std(nelbos)}')
 
-    # evaluate on validation set; this should match what we were getting with the old codebase (after 100 epochs)
-    valid_loader = model.val_dataloader()
-    (nelbo, nll, kl, _), _ = model.forward(*valid_loader.dataset.tensors, anneal = 1.)
-    assert (nelbo.item() - 175.237) < 1e-1
+#         assert (nelbo.item() - 175.237) < 1e-1
 
 def run_fomm_ss(): 
     seed_everything(0)
     model_configs = [ 
         # (1000, 'linear', 0.01, True, 'l1'), # .01, True, 'l1'
-        (1500, 'linear', 0.01, True, 'l1') #  .01, True, 'l1'
-        # (2000, 'linear', 0.01, True, 'l1') # .01, True, 'l1'
+        # (1500, 'linear', 0.01, True, 'l1'), #  .01, True, 'l1'
+        (2000, 'nl', 0.01, True, 'l1') # .01, True, 'l1'
     ]
     parser = ArgumentParser()
     parser.add_argument('--model_name', type=str, default='fomm', help='fomm, ssm, or gru')
@@ -139,7 +162,7 @@ def run_fomm_ss():
     parser.add_argument('--loss_type', type=str, default='semisup')
     parser.add_argument('--bs', default=600, type=int, help='batch size')
     parser.add_argument('--fold', default=1, type=int)
-    parser.add_argument('--ss_missing', type=strtobool, default=True, help='whether to add missing data in semi synthetic setup or not')
+    parser.add_argument('--ss_missing', type=strtobool, default=False, help='whether to add missing data in semi synthetic setup or not')
     parser.add_argument('--ss_in_sample_dist', type=strtobool, default=True, help='whether to use mm training patients to generate validation/test set in semi synthetic data')
 
     # THIS LINE IS KEY TO PULL THE MODEL NAME
@@ -154,7 +177,7 @@ def run_fomm_ss():
 
     for k,model_config in enumerate(model_configs): 
         nsamples_syn, mtype, C, reg_all, reg_type = model_config
-        args.max_epochs = 1000
+        args.max_epochs = 10000
         args.nsamples_syn = nsamples_syn
         args.mtype        = mtype
         args.alpha1_type  = 'linear'
@@ -197,4 +220,4 @@ def run_fomm_ss():
 
 
 if __name__ == '__main__':
-    run_fomm_ss()
+    test_fomm_gated()

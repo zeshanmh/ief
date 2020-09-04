@@ -153,19 +153,21 @@ def run_ssm_ss():
         print()
 
 def run_ssm_ss2(): 
-    seed_everything(0)
+    seed_everything(1)
     # model_configs = [ 
     #     (1000, 'moe', 48, 0.01, True, 'l2'), # 48.000, 0.010000, 1.0000, l2
     #     (1500, 'moe', 48, 0.01, True, 'l2'), # 48.000, 0.010000, 1.0000, l2
     #     (2000, 'moe', 48, 0.01, True, 'l2') # 48.000, 0.010000, 1.0000, l2
     # ]
     model_configs = [ 
-        # (1000, 'lin', 48, 0.01, False, 'l2'), # 48.000, 0.010000, 1.0000, l2
-        # (1500, 'lin', 48, 0.01, False, 'l2'), # 48.000, 0.010000, 0.0000, l2
-        (2000, 'lin', 48, 0.01, True, 'l2') # 48.000, 0.010000, 0.0000, l2
-        # (1000, 'gated', 48, 0.01, True, 'l2'), # 48.000, 0.010000, 1.0000, l2
-        # (1500, 'gated', 48, 0.01, True, 'l2'), # 48.000, 0.010000, 1.0000, l2
-        # (2000, 'gated', 48, 0.01, False, 'l2') # 48.000, 0.010000, 1.0000, l2
+        (1000, 'lin', 64, 0.01, True, 'l2'), # 48.000, 0.010000, 1.0000, l2 -86.93002059979317, std nelbo: 2.308720455440082
+        (1500, 'lin', 48, 0.01, True, 'l2'), # 48.000, 0.010000, 0.0000, l2 -90.58635519101071, std nelbo: 3.337732785962744
+        (2000, 'lin', 48, 0.01, True, 'l2'), # 48.000, 0.010000, 0.0000, l2 -80.53742721753244, std nelbo: 0.9132054166247399
+        (1000, 'gated', 48, 0.01, True, 'l2'), # 48.000, 0.010000, 1.0000, l2 -55.076445347223526, std nelbo: 4.1150217727133525
+        (1000, 'gated', 64, 0.01, True, 'l2'), # 48.000, 0.010000, 1.0000, l2 
+        (1500, 'gated', 48, 0.01, True, 'l2'), # 48.000, 0.010000, 1.0000, l2 -93.4233535405917, std nelbo: 2.099412335001398
+        (2000, 'gated', 64, 0.01, True, 'l2'), # 48.000, 0.010000, 0.0000, l2
+        # (21000, 'gated', 48, 0.01, False, 'l2') # 48.000, 0.010000, 1.0000, l2 #-173.1242269819433, std nelbo: 0.53154754771723
     ]
     parser = ArgumentParser()
     parser.add_argument('--model_name', type=str, default='ssm', help='fomm, ssm, or gru')
@@ -179,10 +181,10 @@ def run_ssm_ss2():
     parser.add_argument('--dataset', default='semi_synthetic', type=str)
     parser.add_argument('--eval_type', type=str, default='nelbo')
     parser.add_argument('--loss_type', type=str, default='unsup')
-    parser.add_argument('--bs', default=600, type=int, help='batch size')
+    parser.add_argument('--bs', default=1000, type=int, help='batch size')
     parser.add_argument('--fold', default=1, type=int)
     parser.add_argument('--ss_missing', type=strtobool, default=True, help='whether to add missing data in semi synthetic setup or not')
-    parser.add_argument('--ss_in_sample_dist', type=strtobool, default=True, help='whether to use mm training patients to generate validation/test set in semi synthetic data')
+    parser.add_argument('--ss_in_sample_dist', type=strtobool, default=False, help='whether to use mm training patients to generate validation/test set in semi synthetic data')
 
     # THIS LINE IS KEY TO PULL THE MODEL NAME
     temp_args, _ = parser.parse_known_args()
