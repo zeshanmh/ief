@@ -8,7 +8,7 @@ from lifelines.utils import concordance_index
 from sklearn.metrics import r2_score
 from pytorch_lightning.metrics.functional import f1_score, precision_recall, auroc
 from pytorch_lightning.metrics.sklearns import F1, Precision, Recall
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from torchcontrib.optim import SWA
 sys.path.append('../data/ml_mmrf')
 sys.path.append('../data/')
@@ -48,6 +48,7 @@ class Model(pl.LightningModule):
         else:
             dt = batch
         # use KL annealing for SSM and SFOMM
+        # print('Batch {}, classes {}, count {}'.format(batch_idx, *np.unique(pt_numpy(dt[-2]), return_counts=True)))
         if self.hparams['anneal'] != -1.: 
             anneal = min(1, self.current_epoch/(self.hparams['max_epochs']*0.5))
             self.hparams['anneal'] = anneal
@@ -80,7 +81,10 @@ class Model(pl.LightningModule):
             nll_estimate = np.mean(batch_nll)
             '''
         if self.hparams['eval_type'] != 'nelbo': 
-            preds, _ = self.predict(*batch)
+            if 'ord' not in self.hparams['loss_type']: 
+                preds, _ = self.predict(*batch)
+            else: 
+                preds, _ = self.predict_ord(*batch)
             return self.compute_metrics(preds, batch, (nelbo, nll, kl))
             
         return {'val_loss': nelbo, 'nll': nll, 'kl': kl}
@@ -134,10 +138,13 @@ class Model(pl.LightningModule):
             raise ValueError('bad metric specified...')
 
     def configure_optimizers(self): 
-        opt = torch.optim.Adam(self.parameters(), lr=self.hparams['lr']) 
         if self.hparams['optimizer_name'] == 'adam': 
+            opt = torch.optim.Adam(self.parameters(), lr=self.hparams['lr']) 
             return opt
+        elif self.hparams['optimizer_name'] == 'rmsprop': 
+            opt = torch.optim.RMSprop(self.parameters(), lr=self.hparams['lr'], momentum=.001)
         elif self.hparams['optimizer_name'] == 'swa': 
+            opt = torch.optim.Adam(self.parameters(), lr=self.hparams['lr']) 
             return SWA(opt, swa_start=100, swa_freq=50, swa_lr=self.hparams['lr'])
 
     def setup(self, stage): 
@@ -146,7 +153,10 @@ class Model(pl.LightningModule):
             ddata = load_mmrf(fold_span = [fold], \
                               digitize_K = 0, \
                               digitize_method = 'uniform', \
-                              suffix='_2mos_tr')
+                              suffix='_2mos_tr', \
+                              restrict_markers=True, \
+                              add_syn_marker=True, \
+                              window='first_second')
 
         elif self.hparams['dataset'] == 'synthetic': 
             nsamples        = {'train':self.hparams['nsamples_syn'], 'valid':1000, 'test':200}
@@ -185,7 +195,7 @@ class Model(pl.LightningModule):
         self.ddata = ddata 
         self.init_model()
         
-    def load_helper(self, tvt, device=None):
+    def load_helper(self, tvt, device=None, oversample=True):
         fold = self.hparams['fold']; batch_size = self.hparams['bs']
 
         if device is not None: 
@@ -201,6 +211,7 @@ class Model(pl.LightningModule):
 
         y_vals   = self.ddata[fold][tvt]['ys_seq'][:,0].astype('float32')
         idx_sort = np.argsort(y_vals)
+
         if 'digitized_y' in self.ddata[fold][tvt]:
             print ('using digitized y')
             Y  = torch.from_numpy(self.ddata[fold][tvt]['digitized_y'].astype('float32'))
@@ -215,6 +226,14 @@ class Model(pl.LightningModule):
 
         data        = TensorDataset(B[idx_sort], X[idx_sort], A[idx_sort], M[idx_sort], Y[idx_sort], CE[idx_sort])
         data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
+        # if tvt == 'train': 
+        #     data        = resample(data, device)
+        #     data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
+        # elif tvt == 'valid' and not oversample:
+        #     data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
+        # else: 
+        #     data        = resample(data, device)
+        #     data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
         return data, data_loader
 
     @pl.data_loader

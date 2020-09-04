@@ -21,6 +21,10 @@ from collections import namedtuple
 from typing import List, Tuple
 from torch.autograd import Variable
 from argparse import ArgumentParser
+from spacecutter.models import OrdinalLogisticModel
+# from spacecutter.losses import CumulativeLinkLoss
+from spacecutter.losses import cumulative_link_loss
+from spacecutter.callbacks import AscensionCallback
 
 class SFOMM(Model): 
     def __init__(self,
@@ -86,16 +90,29 @@ class SFOMM(Model):
         self.prior_sigma    = torch.nn.Parameter(torch.ones(dim_stochastic)*0.1, requires_grad = True)
 
         # prediction 
+        self.num_classes = 3
         self.pred_W1     = nn.Linear(dim_stochastic, dim_hidden, bias = False)
-        self.pred_W2     = nn.Linear(dim_hidden, 2, bias = False)
-        self.pred_sigma  = torch.nn.Parameter(torch.ones(2,)*0.1, requires_grad = True)
+        self.pred_W2     = nn.Linear(dim_hidden, self.num_classes, bias = False)
+        self.pred_sigma  = torch.nn.Parameter(torch.ones(self.num_classes,)*0.1, requires_grad = True)
+        self.m_pred      = nn.Sequential(
+                            nn.Linear(dim_stochastic, dim_hidden),
+                            # nn.ReLU(True),
+                            # nn.Linear(dim_hidden, dim_hidden), 
+                            nn.ReLU(True),
+                            nn.Linear(dim_hidden, 1, bias=False)
+                        )
+        self.mord        = OrdinalLogisticModel(self.m_pred, self.num_classes)
+        # self.link_loss   = CumulativeLinkLoss()
 
         # treatment effect (for synthetic data)
         self.te_W1       = nn.Linear(dim_treat, dim_data)
         self.te_W2       = nn.Linear(dim_treat, dim_data*2)
 
     def p_Y_Z(self, Z, C): 
-        mu = self.pred_W2(torch.sigmoid(self.pred_W1(Z)))
+        if 'ord' not in self.hparams.loss_type: 
+            mu = self.pred_W2(torch.sigmoid(self.pred_W1(Z)))
+        else: 
+            mu = self.mord(Z)
         sigma = mu*0.+torch.nn.functional.softplus(self.pred_sigma)
         p_y_z = Independent(Normal(mu, sigma), 1)
         return p_y_z
@@ -184,31 +201,30 @@ class SFOMM(Model):
 
     
     def forward(self, B, X, A, M, Y, CE, anneal = 1.):
-        Y1 = torch.ones_like(Y); Y0 = torch.zeros_like(Y)     
-        N  = torch.zeros((torch.max(Y)+1,))
-        weights = torch.zeros((torch.max(Y)+1,)).to(Y.device)
-        for c in range(torch.max(Y)+1): 
-            N[c] = torch.sum(torch.where(Y == c, Y1, Y0))
-        for i in range(N.shape[0]): 
-            weights[i] = 1 - N[i] / torch.sum(N)
-
-        if self.hparams['loss_type'] == 'unsup': 
+        if self.hparams['loss_type'] == 'unsup' or self.hparams['loss_type'] == 'ord_unsup': 
             neg_elbo, nll, kl, Z = self.get_loss(B, X, A, M, Y, CE, anneal = anneal)
             reg_loss          = torch.mean(neg_elbo)
             ret_loss          = neg_elbo
-        elif self.hparams['loss_type'] == 'semisup': 
+        elif self.hparams['loss_type'] == 'semisup' or self.hparams['loss_type'] == 'ord_semisup': 
             neg_elbo, nll, kl, Z = self.get_loss(B, X, A, M, Y, CE, anneal = anneal)
             # supervised loss
             _, _, lens         = get_masks(M)
             B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
             pred_dist  = self.p_Y_Z(Z, CE)
-
-            sup_loss   = F.cross_entropy(pred_dist.mean, Y, weight=weights)
+            weights    = self.get_weights(Y)
+            if self.hparams['loss_type'] == 'semisup': 
+                sup_loss   = F.cross_entropy(pred_dist.mean, Y, weight=weights)
+            else: 
+                sup_loss   = cumulative_link_loss(pred_dist.mean, Y[:,None], class_weights=weights)
             # sup_loss   = -pred_dist.log_prob(Y)
             reg_loss   = neg_elbo + sup_loss
             ret_loss   = reg_loss
+        elif self.hparams['loss_type'] == 'ord_sup': 
+            _, reg_loss = self.predict_ord(B, X, A, M, Y, CE)
+            ret_loss    = reg_loss 
+            nll = torch.ones_like(X); kl = torch.ones_like(X)
         elif self.hparams['loss_type'] == 'sup': 
-            _, reg_loss = self.predict(B, X, A, M, Y, CE, weight_present=True, weight=weights)
+            _, reg_loss = self.predict(B, X, A, M, Y, CE)
             ret_loss    = reg_loss
             nll = torch.ones_like(X); kl = torch.ones_like(X)
 
@@ -222,7 +238,7 @@ class SFOMM(Model):
         return (torch.mean(ret_loss), torch.mean(nll), torch.mean(kl), torch.ones_like(kl)), loss 
 
     
-    def sample(self, T_forward, X, A, B):
+    def sample(self, T_forward, X, A, B, Z=None):
         with torch.no_grad():
             if Z is None: 
                 p_Z = self.p_Z_BXA(B, X[:,0,:], A[:,0,:])
@@ -275,19 +291,36 @@ class SFOMM(Model):
         inp_x_post = self.sample(T_forward+1, X[:,T_condition-1:], A[:,T_condition-1:], B, Z_cond)
         inp_x_post = torch.cat([X[:,:T_condition], inp_x_post[:,1:]], 1) 
         empty      = torch.ones(X.shape[0], 3)
-        return nelbo, per_feat_nelbo, empty, empty, inp_x_post, inp_x
-    
-    def predict(self, B, X, A, M, Y, CE, weight_present=False, weight=None):
+        return nelbo, per_feat_nelbo, empty, empty, inp_x_post, inp_x, Z, torch.squeeze(p_Z .rsample((1,)))
+
+    def get_weights(self, Y): 
+        # Y1 = torch.ones_like(Y); Y0 = torch.zeros_like(Y)     
+        # N  = torch.zeros((int(torch.max(Y))+1,))
+        # for c in range(int(torch.max(Y))+1): 
+        #     N[c] = torch.sum(torch.where(Y == c, Y1, Y0))
+        weights = torch.zeros((self.num_classes,)).to(Y.device)
+        N = np.array([102,302,29])
+        for i in range(N.shape[0]): 
+            weights[i] = 1 - N[i] / sum(N)
+        return weights 
+
+    def predict(self, B, X, A, M, Y, CE):
+        weights    = self.get_weights(Y)
         prior_dist = self.p_Z_BXA(B, X[:,0,:], A[:,0,:])
         prior_mean = prior_dist.mean
         pred_dist  = self.p_Y_Z(prior_mean, CE)
+        sup_loss   = F.cross_entropy(pred_dist.mean, Y, weight=weights)
 
-        if weight_present: 
-            sup_loss   = F.cross_entropy(pred_dist.mean, Y, weight=weight)
-        else: 
-            sup_loss   = F.cross_entropy(pred_dist.mean, Y)
-        # sup_loss   = -pred_dist.log_prob(Y)
         return pred_dist.mean, torch.mean(sup_loss)
+
+    def predict_ord(self, B, X, A, M, Y, CE): 
+        weights    = self.get_weights(Y) 
+        prior_dist = self.p_Z_BXA(B, X[:,0,:], A[:,0,:])
+        prior_mean = prior_dist.mean 
+        pred_dist  = self.p_Y_Z(prior_mean, CE)
+        sup_loss   = cumulative_link_loss(pred_dist.mean, Y[:,None], class_weights=weights)
+        return pred_dist.mean, torch.mean(sup_loss)
+
 
     @staticmethod
     def add_model_specific_args(parent_parser): 
