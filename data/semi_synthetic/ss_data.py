@@ -21,7 +21,7 @@ def gen_ss_helper(model, B, X, A, M, Y, CE, k='train', add_missing=False, eval_m
     base_cat   = B[:,None,:].repeat(1, max(1, X.shape[1]-1), 1)
     T_forward  = 20
     if k == 'train':
-        mult = 30
+        mult = 150
     else: 
         mult = eval_mult
     nsamples = mult*B.shape[0]
@@ -37,11 +37,15 @@ def gen_ss_helper(model, B, X, A, M, Y, CE, k='train', add_missing=False, eval_m
         _, _, _, _, sample = model.inspect_ss(T_forward, B, X, A, M, Y, CE)
         Bs[i*B.shape[0]:(i+1)*B.shape[0]] = pt_numpy(B)
         if add_missing: 
-            # Ms[i*M.shape[0]:(i+1)*M.shape[0]] = pt_numpy(M[:,:T_forward,:])
+            # retain original MM missingness pattern 
+#             Ms[i*M.shape[0]:(i+1)*M.shape[0]] = pt_numpy(M[:,:T_forward,:])
+#             Xs[i*X.shape[0]:(i+1)*X.shape[0]] = pt_numpy(sample)
+
+            # sample randomly from all indices
             Mtemp = np.ones((M.shape[0],T_forward,M.shape[2]))
             sample, Mnew = add_missingness(pt_numpy(sample), Mtemp)
             Ms[i*M.shape[0]:(i+1)*M.shape[0]] = Mnew
-            Xs[i*X.shape[0]:(i+1)*X.shape[0]] = sample
+            Xs[i*X.shape[0]:(i+1)*X.shape[0]] = sample            
         else: 
             Ms[i*M.shape[0]:(i+1)*M.shape[0]] = np.ones((M.shape[0],T_forward,M.shape[2]))
             Xs[i*X.shape[0]:(i+1)*X.shape[0]] = pt_numpy(sample)
