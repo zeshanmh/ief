@@ -1,10 +1,11 @@
-fname: 'ssm_lin_semi_synthetic_indist_sc_missing_alt' # name of the run; will save in tb_logs/test_fomm
+fname: 'ssm_lin_semi_synthetic_outdist_sc_missing_seeds' # name of the run; will save in tb_logs/test_fomm
 parameters:   
   model_name: ['ssm']
   dataset: ['semi_synthetic']
   fold: [1]
+  seed: [1,2]
   nsamples_syn: [1000,1500,2000]
-  dim_stochastic: [16,48]
+  dim_stochastic: [48,64]
   # dim_hidden: [100,300]
   etype: ['lin']
   ttype: ['lin']
@@ -17,9 +18,9 @@ parameters:
   checkpoint_callback: [False] # switch to True if you want to save best model
   logger: [True]
   check_val_every_n_epoch: [10]
-  max_epochs: [500]
+  max_epochs: [250]
   progress_bar_refresh_rate: [1]
   gpu_id: [1]
   add_stochastic: [False]
   ss_missing: [True]
-  ss_in_sample_dist: [True]
+  ss_in_sample_dist: [False]

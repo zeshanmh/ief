@@ -1,8 +1,9 @@
-fname: 'rnn_pkpd_semi_synthetic_indist_sc_missing_alt' # name of the run; will save in tb_logs/test_fomm
+fname: 'rnn_pkpd_semi_synthetic_outdist_sc_missing_seeds' # name of the run; will save in tb_logs/test_fomm
 parameters:   
   model_name: ['gru']
   dataset: ['semi_synthetic']
   fold: [1]
+  seed: [1,2]
   nsamples_syn: [1000,1500,2000]
   dim_hidden: [250,500]
   mtype: ['pkpd_gru']
@@ -20,4 +21,4 @@ parameters:
   gpu_id: [3]
   add_stochastic: [False]
   ss_missing: [True]
-  ss_in_sample_dist: [True]
+  ss_in_sample_dist: [False]
