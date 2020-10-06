@@ -10,6 +10,29 @@ from torch.utils.data import DataLoader, TensorDataset
 from torchcontrib.optim import SWA
 from imblearn.over_sampling import RandomOverSampler, SMOTE, ADASYN
 
+def get_attn_mask(attn_shape, a, device): 
+    sub_mask    = np.triu(np.ones(attn_shape), k=1).astype('uint8')
+    lines       = a[...,-3:]
+    for i in range(sub_mask.shape[0]): 
+        temp = sub_mask[i]; lines_t = lines[i]
+        # iterate through each elem in the array and zero out :min(arr)
+        Tmax = 0
+        for j in range(3): 
+            line = np.where(lines_t[:,j] == 1.)[0]
+            if len(line) == 0: 
+                continue
+            Tmax = max(list(line))+1
+            if min(list(line)) == 0: 
+                continue
+            for idx in list(line): 
+                temp[idx,:min(list(line))] = 1 
+        temp[Tmax:] = 1
+        sub_mask[i] = temp
+    if device is not None: 
+        Am = (torch.from_numpy(sub_mask) == 0).to(device)
+    else: 
+        Am = (torch.from_numpy(sub_mask) == 0)
+    return Am
 
 def resample(data, device=None, strategy='random'): 
     ''' Good effort, lol....

@@ -9,6 +9,7 @@ import sys, os
 from torch.autograd import grad
 from models.iefs.logcellkill import LogCellKill
 from models.iefs.treatexp import TreatmentExponential
+from models.multi_head_att import MultiHeadedAttention
 
 def te_matrix():
     te_matrix = np.array([[-1, 0, 1, -1, 1, 0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1], 
@@ -17,7 +18,6 @@ def te_matrix():
                           [-1, 0, 0, -1, 0, 1,  1,  0,  0,  1,  0, -1,  0,  0,  0,  0], 
                           [-1, 0, 1, -1, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1]])
     return te_matrix
-
    
 class GatedTransition(nn.Module):
     def __init__(self, dim_stochastic, dim_treat, dim_hidden = 300, dim_output = -1, dim_subtype = -1, dim_input = -1, use_te = False, \
@@ -43,6 +43,7 @@ class GatedTransition(nn.Module):
                 self.out_layer    = nn.Sequential()
         self.control_layer    = nn.Linear(dim_treat, dim_stochastic)
         self.inp_layer        = nn.Linear(dim_input, dim_stochastic)
+        # self.attn = MultiHeadedAttention(1, dim_stochastic)
         if not avoid_init:
             if use_te: # only use
                 prior_weight_15   = te_matrix()
@@ -73,7 +74,6 @@ class GatedTransition(nn.Module):
         out_linear = inp*torch.tanh(self.control_layer(con))
         out_te     = self.treatment_exp(inp, con, eps=eps)
         out_logcell= self.logcell(inp, con)
-        
         if self.dim_subtype == -1: 
             probs      = torch.softmax(self.alphas, 1)
         else: 

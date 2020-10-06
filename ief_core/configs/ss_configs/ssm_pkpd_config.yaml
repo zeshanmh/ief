@@ -1,26 +1,27 @@
-fname: 'ssm_pkpd_semi_synthetic_outdist_missing_seeds' # name of the run; will save in tb_logs/test_fomm #failed at 25
+fname: 'ssm_pkpd_semi_synthetic_indist_sc_missing_alt' # name of the run; will save in tb_logs/test_fomm #failed at 25
 parameters:   
   model_name: ['ssm']
   dataset: ['semi_synthetic']
   fold: [1]
-  seed: [1]
-  nsamples_syn: [1000,1500,2000] 
-  dim_stochastic: [48,64] # 16,48
+  seed: [0]
+  nsamples_syn: [1000,1500,2000,10000] 
+  dim_stochastic: [48] # 16,48
   dim_hidden: [300]
   etype: ['lin']
   ttype: ['gated']
   bs: [600]
-  C: [0.01,0.1] #0.01, 0.1
-  reg_all: [True,False] #False, True
-  reg_type: ['l1','l2'] #'l1', 'l2'
+  C: [0.01] #0.01, 0.1
+  reg_all: [True] #False, True
+  reg_type: ['l1'] #'l1', 'l2'
   alpha1_type: ['linear']
   otype: ['linear']
   checkpoint_callback: [False] # switch to True if you want to save best model
-  logger: [True]
+  logger: [False]
   check_val_every_n_epoch: [10]
-  max_epochs: [250]
+  max_epochs: [300]
   progress_bar_refresh_rate: [1]
   gpu_id: [1]
   add_stochastic: [False]
   ss_missing: [True]
-  ss_in_sample_dist: [False]
+  ss_in_sample_dist: [True]
+  optuna: [True]

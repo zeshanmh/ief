@@ -27,29 +27,32 @@ from spacecutter.losses import cumulative_link_loss
 from spacecutter.callbacks import AscensionCallback
 
 class SFOMM(Model): 
-    def __init__(self,
-                 dim_stochastic: int = 16, 
-                 dim_hidden: int = 300, 
-                 mtype: str = 'linear', 
-                 inftype: str = 'rnn',
-                 C: float = 0., 
-                 reg_all: bool = True, 
-                 reg_type: str = 'l1', 
+    def __init__(self, trial, 
+                 # dim_stochastic: int = 16, 
+                 # dim_hidden: int = 300, 
+                 # mtype: str = 'linear', 
+                 # inftype: str = 'rnn',
+                 # C: float = 0., 
+                 # reg_all: bool = True, 
+                 # reg_type: str = 'l1', 
                  **kwargs
                 ): 
-        super(SFOMM, self).__init__()
+        super(SFOMM, self).__init__(trial)
         self.save_hyperparameters()
 
     def init_model(self):         
         mtype      = self.hparams['mtype']; otype = self.hparams['otype']
         alpha1_type = self.hparams['alpha1_type']
-        dim_hidden = self.hparams['dim_hidden']
+        # dim_hidden = self.hparams['dim_hidden']
+        dim_stochastic = self.trial.suggest_int('dim_stochastic',16,64)
+        dim_hidden   = self.trial.suggest_int('dim_hidden',100,500)
         dim_data   = self.hparams['dim_data']
         dim_base   = self.hparams['dim_base']
         dim_treat  = self.hparams['dim_treat']
-        dim_stochastic = self.hparams['dim_stochastic']
+        # dim_stochastic = self.hparams['dim_stochastic']
         add_stochastic = self.hparams['add_stochastic']
-        inftype    = self.hparams['inftype']
+        # inftype    = self.hparams['inftype']
+        inftype = self.trial.suggest_categorical('inftype', ['rnn', 'birnn'])
 
         if inftype == 'rnn': 
             self.inf_network= nn.GRU(dim_data+dim_treat+dim_base+1, dim_hidden, 1, batch_first = True)

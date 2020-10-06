@@ -19,20 +19,20 @@ from models.utils import *
 
 class Model(pl.LightningModule): 
 
-    def __init__(self, 
-                 lr: float = 1e-3, 
-                 anneal: float = 1., 
-                 imp_sampling: bool = False, 
-                 optimizer_name: str = 'adam',
-                 fname = None, 
-                 **kwargs
-                ): 
+    def __init__(self, trial, **kwargs): 
         super().__init__()
         torch.manual_seed(0)
         np.random.seed(0)
         if torch.cuda.is_available(): # don't need 
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
+        self.trial = trial
+        # self.lr = trial.suggest_loguniform('lr', 1e-5, 1e-2)
+        self.bs = trial.suggest_categorical('bs', [600,1500])
+        self.lr = 1e-3
+        self.C  = trial.suggest_categorical('C', [.01,.1,1])
+        self.reg_all  = trial.suggest_categorical('reg_all', [True, False])
+        self.reg_type = trial.suggest_categorical('reg_type', ['l1', 'l2'])
     
     def forward(self,**kwargs):
         raise ValueError('Should be overriden')
@@ -139,7 +139,8 @@ class Model(pl.LightningModule):
 
     def configure_optimizers(self): 
         if self.hparams['optimizer_name'] == 'adam': 
-            opt = torch.optim.Adam(self.parameters(), lr=self.hparams['lr']) 
+            # opt = torch.optim.Adam(self.parameters(), lr=self.hparams['lr']) 
+            opt = torch.optim.Adam(self.parameters(), lr=self.lr) 
             return opt
         elif self.hparams['optimizer_name'] == 'rmsprop': 
             opt = torch.optim.RMSprop(self.parameters(), lr=self.hparams['lr'], momentum=.001)
@@ -150,13 +151,14 @@ class Model(pl.LightningModule):
     def setup(self, stage): 
         fold = self.hparams['fold']
         if self.hparams['dataset'] == 'mm': 
-            ddata = load_mmrf(fold_span = [fold], \
-                              digitize_K = 0, \
-                              digitize_method = 'uniform', \
-                              suffix='_2mos_tr', \
-                              restrict_markers=True, \
-                              add_syn_marker=True, \
-                              window='first_second')
+            # ddata = load_mmrf(fold_span = [fold], \
+            #                   digitize_K = 0, \
+            #                   digitize_method = 'uniform', \
+            #                   suffix='_2mos_tr', \
+            #                   restrict_markers=True, \
+            #                   add_syn_marker=True, \
+            #                   window='first_second')
+            ddata = load_mmrf(fold_span = [fold], digitize_K = 20, digitize_method = 'uniform', suffix='_2mos')
 
         elif self.hparams['dataset'] == 'synthetic': 
             nsamples        = {'train':self.hparams['nsamples_syn'], 'valid':1000, 'test':200}
@@ -186,7 +188,7 @@ class Model(pl.LightningModule):
             self.hparams['dim_base']  = ddata['train']['B'].shape[-1]
             self.hparams['dim_data']  = ddata['train']['X'].shape[-1]
             self.hparams['dim_treat'] = ddata['train']['A'].shape[-1]
-         
+            print(f'shape of training data:{ddata["train"]["X"].shape}')
         if self.hparams['eval_type'] == 'f1': 
             self.f1 = F1(average='weighted')
             self.precision = Precision(average='weighted')
@@ -195,8 +197,8 @@ class Model(pl.LightningModule):
         self.ddata = ddata 
         self.init_model()
         
-    def load_helper(self, tvt, device=None, oversample=True):
-        fold = self.hparams['fold']; batch_size = self.hparams['bs']
+    def load_helper(self, tvt, device=None, oversample=True, att_mask=False):
+        fold = self.hparams['fold']; batch_size = self.bs
 
         if device is not None: 
             B  = torch.from_numpy(self.ddata[fold][tvt]['b'].astype('float32')).to(device)
@@ -224,7 +226,12 @@ class Model(pl.LightningModule):
         else: 
             CE = torch.from_numpy(self.ddata[fold][tvt]['ce'].astype('float32'))
 
-        data        = TensorDataset(B[idx_sort], X[idx_sort], A[idx_sort], M[idx_sort], Y[idx_sort], CE[idx_sort])
+        if att_mask: 
+            attn_shape  = (A.shape[0],A.shape[1],A.shape[1])
+            Am   = get_attn_mask(attn_shape, self.ddata[fold][tvt]['a'].astype('float32'), device)
+            data = TensorDataset(B[idx_sort], X[idx_sort], A[idx_sort], M[idx_sort], Y[idx_sort], CE[idx_sort], Am[idx_sort])
+        else: 
+            data = TensorDataset(B[idx_sort], X[idx_sort], A[idx_sort], M[idx_sort], Y[idx_sort], CE[idx_sort])
         data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
         # if tvt == 'train': 
         #     data        = resample(data, device)
@@ -239,16 +246,16 @@ class Model(pl.LightningModule):
     @pl.data_loader
     def train_dataloader(self):
         if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
-            _, train_loader = self.load_helper(tvt='train')
+            _, train_loader = self.load_helper(tvt='train', att_mask=self.hparams['att_mask'])
         elif self.hparams['dataset'] == 'semi_synthetic': 
-            _, train_loader = load_ss_helper(self.ddata, tvt='train', bs=self.hparams['bs'])
+            _, train_loader = load_ss_helper(self.ddata, tvt='train', bs=self.bs)
         return train_loader
 
     @pl.data_loader
     def val_dataloader(self):
         if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
-            _, valid_loader = self.load_helper(tvt='valid')
+            _, valid_loader = self.load_helper(tvt='valid', att_mask=self.hparams['att_mask'])
         elif self.hparams['dataset'] == 'semi_synthetic': 
-            _, valid_loader = load_ss_helper(self.ddata, tvt='valid', bs=self.hparams['bs'])
+            _, valid_loader = load_ss_helper(self.ddata, tvt='valid', bs=self.bs)
         return valid_loader
 

@@ -6,6 +6,7 @@ import sys
 from numpy.random import choice 
 import random
 sys.path.append('/afs/csail.mit.edu/u/z/zeshanmh/research/trvae')
+sys.path.append('/afs/csail.mit.edu/u/z/zeshanmh/research/trvae/data')
 sys.path.append('/afs/csail.mit.edu/u/z/zeshanmh/research/trvae/dmm')
 sys.path.append('/afs/csail.mit.edu/u/z/zeshanmh/research/trvae/models')
 from base import setup_torch_dataset, pt_numpy
@@ -21,7 +22,7 @@ def gen_ss_helper(model, B, X, A, M, Y, CE, k='train', add_missing=False, eval_m
     base_cat   = B[:,None,:].repeat(1, max(1, X.shape[1]-1), 1)
     T_forward  = 20
     if k == 'train':
-        mult = 150
+        mult = 50
     else: 
         mult = eval_mult
     nsamples = mult*B.shape[0]

@@ -1,13 +1,13 @@
-fname: 'ssm_baseline_mm_fold3' # name of the run; will save in tb_logs/test_fomm
+fname: 'gru_att1_mm_fold2' # name of the run; will save in tb_logs/test_fomm
 parameters:   
-  model_name: ['ssm_baseline']
+  model_name: ['gru']
   dataset: ['mm']
-  fold: [3]
+  fold: [2]
   # dim_stochastic: [48] 
   dim_hidden: [300]
-  etype: ['lin']
-  ttype: ['lin']
-#   mtype: ['attn_transition']
+  # etype: ['lin']
+  # ttype: ['gated']
+  mtype: ['pkpd_gru_att']
   bs: [600]
   C: [0.01] 
   reg_all: [True] 
@@ -19,9 +19,8 @@ parameters:
   check_val_every_n_epoch: [10]
   max_epochs: [1000]
   progress_bar_refresh_rate: [1]
-  gpu_id: [1]
+  gpu_id: [3]
   add_stochastic: [True]
-  att_mask: [True]
   optuna: [True]
-  num_optuna_trials: [15]
+  num_optuna_trials: [150]
  

@@ -8,8 +8,8 @@ from models.base import Model
 from models.utils import *
 
 class RNN_STInf(Model):
-    def __init__(self, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx='diag', rank = 5, use_bn = False, nl = 'tanh', combiner_type = 'standard'):
-        super(RNN_STInf, self).__init__()
+    def __init__(self, trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx='diag', rank = 5, use_bn = False, nl = 'tanh', combiner_type = 'standard'):
+        super(RNN_STInf, self).__init__(trial)
         self.dim_base   = dim_base
         self.dim_data   = dim_data
         self.dim_treat  = dim_treat

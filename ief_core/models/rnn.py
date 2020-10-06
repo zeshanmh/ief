@@ -11,6 +11,8 @@ from distutils.util import strtobool
 from models.utils import *
 from models.ssm.inference import RNN_STInf, Attention_STInf
 from models.iefs.gated import GatedTransition
+from models.multi_head_att import MultiHeadedAttention
+from models.iefs.att_iefs import AttentionIEFTransition
 from models.iefs.moe import MofE
 from pyro.distributions import Normal, Independent, Categorical, LogNormal
 from typing import List, Tuple
@@ -21,23 +23,16 @@ from torch.autograd import Variable
 from argparse import ArgumentParser
 
 class GRU(Model): 
-    def __init__(self, 
-                 dim_hidden: int = 300, 
-                 mtype: str = 'rnn', 
-                 utype: str = 'linear',
-                 dropout: float = 0.,  
-                 C: float = 0., 
-                 reg_all: bool = True, 
-                 reg_type: str = 'l1', 
-                 **kwargs
-                ): 
-        super(GRU, self).__init__()
+    def __init__(self, trial, **kwargs): 
+        super(GRU, self).__init__(trial)
         self.save_hyperparameters()
 
     def init_model(self): 
         mtype = self.hparams['mtype']; utype = self.hparams['utype']; 
         dropout = self.hparams['dropout']
-        dim_hidden  = self.hparams['dim_hidden']
+        # dim_hidden  = self.hparams['dim_hidden']
+        dim_hidden  = self.trial.suggest_categorical('dim_hidden',[100,250,500,600]); self.dim_hidden = dim_hidden
+        nheads      = self.hparams['nheads']
         dim_data    = self.hparams['dim_data']
         dim_base    = self.hparams['dim_base']
         dim_treat   = self.hparams['dim_treat']
@@ -50,6 +45,8 @@ class GRU(Model):
             self.model   = nn.GRU(dim_data+dim_treat+dim_base, dim_hidden, 1, batch_first = True, dropout = dropout)
         elif mtype == 'pkpd_gru':
             self.model   = GRULayer(PKPD_GRU, dim_data, dim_treat, dim_base, dim_hidden, -1, alpha1_type, otype, add_stochastic)
+        elif mtype == 'pkpd_gru_att': 
+            self.model   = GRULayer(PKPD_GRU_Att, dim_data, dim_treat, dim_base, dim_hidden, -1, alpha1_type, otype, add_stochastic, nheads)
         else:
             raise ValueError('Bad RNN model')
 
@@ -112,11 +109,14 @@ class GRU(Model):
         (nll,)     = self.get_loss(B, X, A, M, Y, CE, anneal = anneal)
         reg_loss   = torch.mean(nll)
         for name,param in self.named_parameters():
-            if self.hparams.reg_all:
-                reg_loss += self.hparams.C*apply_reg(param, reg_type=self.hparams.reg_type)
+            # if self.hparams.reg_all:
+            if self.reg_all: 
+                # reg_loss += self.hparams.C*apply_reg(param, reg_type=self.hparams.reg_type)
+                reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
             else:
                 if 'weight' in name:
-                    reg_loss += self.hparams.C*apply_reg(param, reg_type=self.hparams.reg_type)
+                    # reg_loss += self.hparams.C*apply_reg(param, reg_type=self.hparams.reg_type)
+                    reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
         return (torch.mean(nll), torch.mean(nll), torch.tensor(0.), torch.tensor(0.)), torch.mean(reg_loss) 
     
     def get_hidden(self, X, A, B):
@@ -127,7 +127,8 @@ class GRU(Model):
         
     def sample(self, T_forward, X, A, B, hidden = None):
         if hidden is None:
-            hidden = Variable(torch.zeros(1, X.shape[0], self.hparams['dim_hidden'])).to(X.device)
+            # hidden = Variable(torch.zeros(1, X.shape[0], self.hparams['dim_hidden'])).to(X.device)
+            hidden = Variable(torch.zeros(1, X.shape[0], self.dim_hidden)).to(X.device)
         inp        = torch.cat([X[:,[0],:], A[:,[0],:], B[:,None,:]],-1)
         mtype      = self.hparams['mtype']
         with torch.no_grad():
@@ -186,6 +187,7 @@ class GRU(Model):
         parser.add_argument('--alpha1_type', type=str, default='linear', help='alpha1 parameterization in TreatExp IEF')
         parser.add_argument('--otype', type=str, default='linear', help='final layer of GroMOdE IEF (linear, identity, nl)')
         parser.add_argument('--add_stochastic', type=strtobool, default=False, help='conditioning alpha-1 of TEXP on S_[t-1]')
+        parser.add_argument('--nheads', type=int, default=1, help='number of heads for attention-based generative model')        
 
         return parser 
 
@@ -260,6 +262,61 @@ class PKPD_GRU(nn.Module):#jit.ScriptModule):
         h_r, h_i, h_n = gate_h.chunk(3, 1)
         con  = torch.cat([A[...,[0]],B,A[...,1:]],-1)
         te   = self.te(x, con)
+        te_h   = self.te2h(te)
+        te_h   = te_h.view(-1, te_h.size(1))
+        te_r, te_i, te_n = te_h.chunk(3,1)
+        resetgate = torch.sigmoid(te_r + h_r)
+        inputgate = torch.sigmoid(te_i + h_i)
+        newgate   = torch.tanh(te_n + (resetgate * h_n))
+        hy = newgate + inputgate * (hidden - newgate)
+        
+        return hy
+
+class PKPD_GRU_Att(nn.Module):#jit.ScriptModule):
+    __constants__ = ['dim_data','dim_treat','dim_base','dim_hidden', 'dim_subtype']
+    def __init__(self, dim_data, dim_treat, dim_base, dim_hidden, dim_subtype=-1, alpha1_type='linear', otype='linear', add_stochastic=False, nheads=1):
+        super(PKPD_GRU_Att, self).__init__()
+        
+        self.dim_data    = dim_data
+        self.dim_treat   = dim_treat
+        self.dim_base    = dim_base
+        self.dim_hidden  = dim_hidden
+        self.dim_subtype = dim_subtype
+
+        self.x2h  = nn.Linear(dim_data+dim_treat+dim_base, 2*dim_hidden, bias=True)
+        self.te2h = nn.Linear(dim_data+dim_treat+dim_base, 3*dim_hidden, bias=True)
+        self.te   = AttentionIEFTransition(dim_data+dim_treat+dim_base, dim_treat+dim_base, dim_hidden=dim_hidden, dim_input=dim_data+dim_treat+dim_base, \
+                        use_te = True, avoid_init = True, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic, num_heads=nheads, response_only=True)
+        #     self.te   = GatedTransition(dim_data+dim_treat+dim_base, dim_treat+dim_base, response_only = True, \
+        #         alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic)
+        
+
+        self.h2h  = nn.Linear(dim_hidden,  3 * dim_hidden, bias=True)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        std = 1.0 / math.sqrt(self.dim_hidden)
+        for w in self.parameters():
+            w.data.uniform_(-std, std)
+    
+    def get_hidden(self, bs):
+        return torch.zeros(bs, self.dim_hidden).to(self.x2h.weight.device)
+    
+    #@jit.script_method
+    def forward(self, x, hidden):
+        # type: (Tensor, Tensor) -> Tensor 
+        # x now consists of [X, A, B, Z]
+        X = x[...,:self.dim_data]
+        A = x[...,self.dim_data:self.dim_data+self.dim_treat]
+        B = x[...,self.dim_data+self.dim_treat:self.dim_data+self.dim_treat+self.dim_base]
+        x = torch.cat([X,A,B], -1)
+        x    = x.view(-1, x.size(1))
+        gate_h = self.h2h(hidden)
+        gate_h = gate_h.squeeze()
+        h_r, h_i, h_n = gate_h.chunk(3, 1)
+        con  = torch.cat([A[...,[0]],B,A[...,1:]],-1)
+        te   = self.te(x[:,None,:], con[:,None,:])
+        te   = te.squeeze()
         te_h   = self.te2h(te)
         te_h   = te_h.view(-1, te_h.size(1))
         te_r, te_i, te_n = te_h.chunk(3,1)

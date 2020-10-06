@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 import pytorch_lightning as pl
 import sys 
+import optuna
 import os
 from lifelines.utils import concordance_index
 from sklearn.metrics import r2_score
@@ -16,7 +17,7 @@ sys.path.append('../../data/ml_mmrf')
 sys.path.append('../../data/')
 from ml_mmrf_v1.data import load_mmrf
 from synthetic.synthetic_data import load_synthetic_data_trt, load_synthetic_data_noisy
-from models.fomm import FOMM 
+from models.fomm import FOMM, FOMMAtt
 from semi_synthetic.ss_data import *
 from distutils.util import strtobool
 
@@ -79,10 +80,11 @@ def test_fomm_gated():
     seed_everything(0)
     
     configs = [ 
-        (10000, 'gated', 0.01, True, 'l2')
+        (1, 10000, 'attn_transition', .1, True, 'l1')
+        # (3, 10000, 'attn_transition', 1, False, 'l2')
     ]
     parser = ArgumentParser()
-    parser.add_argument('--model_name', type=str, default='fomm', help='fomm, ssm, or gru')
+    parser.add_argument('--model_name', type=str, default='fomm_att', help='fomm, ssm, or gru')
     parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
     parser.add_argument('--anneal', type=float, default=1., help='annealing rate')
     parser.add_argument('--fname', type=str, help='name of save file')
@@ -95,6 +97,10 @@ def test_fomm_gated():
     parser.add_argument('--dataset', default='mm', type=str)
     parser.add_argument('--bs', default=600, type=int, help='batch size')
     parser.add_argument('--fold', default=1, type=int)
+    parser.add_argument('--ss_missing', type=strtobool, default=False, help='whether to add missing data in semi synthetic setup or not')
+    parser.add_argument('--ss_in_sample_dist', type=strtobool, default=False, help='whether to use mm training patients to generate validation/test set in semi synthetic data')
+    parser.add_argument('--att_mask', type=strtobool, default=False, help='set to True for SSMAtt and FOMMAtt')
+
 
     # THIS LINE IS KEY TO PULL THE MODEL NAME
     temp_args, _ = parser.parse_known_args()
@@ -105,39 +111,43 @@ def test_fomm_gated():
     
     for k,config in enumerate(configs): 
         print(f'running config: {config}')
-        max_epochs, mtype, C, reg_all, reg_type = config
+        fold, max_epochs, mtype, C, reg_all, reg_type = config
         
         # parse args and convert to dict
         args = parser.parse_args()
+        args.fold       = fold
         args.max_epochs = max_epochs
         args.dim_hidden = 300
         args.mtype      = mtype
         args.C = C; args.reg_all = reg_all; args.reg_type = reg_type
         args.alpha1_type = 'linear'
+        args.otype = 'identity'
+        print(f'FOLD: {args.fold}')
         args.add_stochastic = False
         dict_args = vars(args)
 
-        # initialize FOMM w/ args and train 
-        model = FOMM(**dict_args)
-        checkpoint_callback = ModelCheckpoint(filepath='./checkpoints/fomm_gated')
-        early_stop_callback = EarlyStopping(
-           monitor='val_loss',
-           min_delta=0.00,
-           patience=10,
-           verbose=False,
-           mode='min'
-        )
-        trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, \
-                        checkpoint_callback=checkpoint_callback, early_stop_callback=early_stop_callback)
+        # initialize FOMM w/ args and train
+        trial = optuna.trial.FixedTrial({'bs': args.bs, 'lr': args.lr, 'C': args.C, 'reg_all': args.reg_all, 'reg_type': args.reg_type, 'dim_hidden': args.dim_hidden}) 
+        model = FOMM(trial, **dict_args)
+        checkpoint_callback = ModelCheckpoint(filepath='./checkpoints/mmfold_' + str(fold) + '_bagoffunc_fomm_att1{epoch:05d}-{val_loss:.2f}')
+        # early_stop_callback = EarlyStopping(
+        #    monitor='val_loss',
+        #    min_delta=0.00,
+        #    patience=10,
+        #    verbose=False,
+        #    mode='min'
+        # )
+        trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, gpus=[2], \
+                        checkpoint_callback=checkpoint_callback, early_stop_callback=False)
         trainer.fit(model)
 
         # evaluate on validation set; this should match what we were getting with the old codebase (after 100 epochs)
-        valid_loader = model.val_dataloader()
-        nelbos = []
-        for i in range(50):
-            (nelbo, nll, kl, _), _ = model.forward(*valid_loader.dataset.tensors, anneal = 1.)
-            nelbos.append(nelbo.item())
-        print(f'final nelbo for {config} (config {k+1}): mean: {np.mean(nelbos)}, std: {np.std(nelbos)}')
+        # valid_loader = model.val_dataloader()
+        # nelbos = []
+        # for i in range(50):
+        #     (nelbo, nll, kl, _), _ = model.forward(*valid_loader.dataset.tensors, anneal = 1.)
+        #     nelbos.append(nelbo.item())
+        # print(f'final nelbo for {config} (config {k+1}): mean: {np.mean(nelbos)}, std: {np.std(nelbos)}')
 
 #         assert (nelbo.item() - 175.237) < 1e-1
 
@@ -164,6 +174,7 @@ def run_fomm_ss():
     parser.add_argument('--fold', default=1, type=int)
     parser.add_argument('--ss_missing', type=strtobool, default=False, help='whether to add missing data in semi synthetic setup or not')
     parser.add_argument('--ss_in_sample_dist', type=strtobool, default=True, help='whether to use mm training patients to generate validation/test set in semi synthetic data')
+    parser.add_argument('--att_mask', type=strtobool, default=False, help='set to True for SSMAtt and FOMMAtt')
 
     # THIS LINE IS KEY TO PULL THE MODEL NAME
     temp_args, _ = parser.parse_known_args()

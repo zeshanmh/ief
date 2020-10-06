@@ -9,9 +9,11 @@ import torch.nn as nn
 from models.base import Model
 from distutils.util import strtobool
 from models.utils import *
+from models.multi_head_att import MultiHeadedAttention
 from models.ssm.inference import RNN_STInf, Attention_STInf
 from models.iefs.gated import GatedTransition
 from models.iefs.moe import MofE
+from models.iefs.att_iefs import AttentionIEFTransition
 from pyro.distributions import Normal, Independent, Categorical, LogNormal
 from typing import List, Tuple
 from torch import Tensor
@@ -21,19 +23,13 @@ from torch.autograd import Variable
 from argparse import ArgumentParser
 
 class FOMM(Model): 
-    def __init__(self, 
-                 dim_hidden: int = 300, 
-                 mtype: str = 'linear', 
-                 C: float = 0., 
-                 reg_all: bool = True, 
-                 reg_type: str = 'l1', 
-                 **kwargs
-                ): 
-        super(FOMM, self).__init__()
+    def __init__(self, trial, **kwargs): 
+        super(FOMM, self).__init__(trial)
         self.save_hyperparameters()
 
     def init_model(self):         
         mtype      = self.hparams['mtype']; otype = self.hparams['otype']
+        num_heads  = self.hparams['nheads']
         alpha1_type = self.hparams['alpha1_type']
         dim_hidden = self.hparams['dim_hidden']
         dim_data   = self.hparams['dim_data']
@@ -52,10 +48,18 @@ class FOMM(Model):
             self.model_mu   = GatedTransition(dim_data, dim_treat+dim_base, dim_hidden=dim_hidden, dim_input=dim_data+dim_treat+dim_base, \
                                 use_te = True, avoid_init = avoid_init, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic)
             self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)
+        elif mtype == 'attn_transition': 
+            avoid_init = False
+            if dim_data !=16:
+                avoid_init = True
+            self.model_mu   = AttentionIEFTransition(dim_data, dim_treat+dim_base, dim_hidden=dim_hidden, dim_input=dim_data+dim_treat+dim_base, \
+                            use_te = True, avoid_init = avoid_init, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic, num_heads=num_heads)
+            self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)
         elif mtype == 'moe': 
             self.model_mu   = MofE(dim_data, dim_treat+dim_base, dim_input = dim_data+dim_treat+dim_base, num_experts=3, eclass='nl')
             self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)
         elif mtype == 'nl': 
+            dim_hidden      = self.trial.suggest_int('dim_hidden',100,500)
             self.model_mu   = nn.Sequential(nn.Linear(dim_treat+dim_base+dim_data, dim_hidden), nn.ReLU(True), nn.Linear(dim_hidden, dim_data))
             self.model_sig  = nn.Sequential(nn.Linear(dim_treat+dim_base+dim_data, dim_hidden), nn.ReLU(True), nn.Linear(dim_hidden, dim_data))
         else: 
@@ -68,7 +72,7 @@ class FOMM(Model):
             p_x_mu   = X[:,:-1,:]
         elif mtype=='linear_prior':
             p_x_mu   = self.model_mu(X[:,:-1,:], A[:,:-1,:], base_cat)
-        elif 'logcellkill' in mtype or 'treatment_exp' in mtype or 'gated' in mtype or 'moe' in mtype: 
+        elif 'logcellkill' in mtype or 'treatment_exp' in mtype or 'gated' in mtype or 'moe' in mtype or 'attn' in mtype: 
             Aval     = A[:,:-1,:]
             cat      = torch.cat([X[:,:-1,:], A[:,:-1,:], base_cat], -1)
             p_x_mu   = self.model_mu(cat, torch.cat([Aval[...,[0]], base_cat, Aval[...,1:]],-1))
@@ -96,11 +100,12 @@ class FOMM(Model):
         (nll,)     = self.get_loss(B, X, A, M, Y, CE, anneal = anneal)
         reg_loss   = torch.mean(nll)
         for name,param in self.named_parameters():
-            if self.hparams['reg_all']:
-                reg_loss += self.hparams['C']*apply_reg(param, reg_type=self.hparams['reg_type'])
+            if self.reg_all:
+                # reg_loss += self.hparams['C']*apply_reg(param, reg_type=self.hparams['reg_type'])
+                reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
             else:
                 if 'weight' in name:
-                    reg_loss += self.hparams['C']*apply_reg(param, reg_type=self.hparams['reg_type'])
+                    reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
         return (torch.mean(nll), torch.mean(nll), torch.tensor(0.), torch.tensor(0.)), torch.mean(reg_loss) 
     
     def sample(self, T_forward, X, A, B):
@@ -158,11 +163,118 @@ class FOMM(Model):
         parser.add_argument('--C', type=float, default=.1, help='regularization strength')
         parser.add_argument('--reg_all', type=strtobool, default=True, help='regularize all weights or only subset')    
         parser.add_argument('--reg_type', type=str, default='l1', help='regularization type')
+        parser.add_argument('--nheads', type=int, default=1, help='number of heads for attention-based generative model')        
         parser.add_argument('--alpha1_type', type=str, default='linear', help='alpha1 parameterization in TreatExp IEF')
         parser.add_argument('--otype', type=str, default='linear', help='final layer of GroMOdE IEF (linear, identity, nl)')
         parser.add_argument('--add_stochastic', type=strtobool, default=False, help='conditioning alpha-1 of TEXP on S_[t-1]')
 
         return parser 
+
+
+class FOMMAtt(FOMM): 
+    def __init__(self, trial, **kwargs): 
+        super(FOMMAtt, self).__init__(trial)
+        self.save_hyperparameters()
+
+    def init_model(self):         
+        mtype      = self.hparams['mtype']; otype = self.hparams['otype']
+        num_heads  = self.hparams['nheads']
+        alpha1_type= self.hparams['alpha1_type']
+        dim_hidden = self.hparams['dim_hidden']
+        dim_data   = self.hparams['dim_data']
+        dim_base   = self.hparams['dim_base']
+        dim_treat  = self.hparams['dim_treat']
+        add_stochastic = self.hparams['add_stochastic']
+
+        # define the transition function 
+        if mtype == 'linear':
+            self.model_mu   = nn.Linear(dim_data, dim_data)
+            self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data) 
+        elif mtype == 'gated':
+            avoid_init = False
+            if dim_data !=16:
+                avoid_init = True
+            self.model_mu   = GatedTransition(dim_data, dim_treat+dim_base, dim_hidden=dim_hidden, dim_input=dim_data+dim_treat+dim_base, \
+                                use_te = True, avoid_init = avoid_init, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic)
+            self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)
+        elif mtype == 'attn_transition': 
+            avoid_init = False
+            if dim_data !=16:
+                avoid_init = True
+            self.model_mu   = AttentionIEFTransition(dim_data, dim_treat+dim_base, dim_hidden=dim_hidden, dim_input=dim_data+dim_treat+dim_base, \
+                            use_te = True, avoid_init = avoid_init, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic, num_heads=num_heads)
+            self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)
+        elif mtype == 'moe': 
+            self.model_mu   = MofE(dim_data, dim_treat+dim_base, dim_input = dim_data+dim_treat+dim_base, num_experts=3, eclass='nl')
+            self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)
+        elif mtype == 'nl': 
+            dim_hidden      = self.trial.suggest_int('dim_hidden',100,500)
+            self.model_mu   = nn.Sequential(nn.Linear(dim_treat+dim_base+dim_data, dim_hidden), nn.ReLU(True), nn.Linear(dim_hidden, dim_data))
+            self.model_sig  = nn.Sequential(nn.Linear(dim_treat+dim_base+dim_data, dim_hidden), nn.ReLU(True), nn.Linear(dim_hidden, dim_data))
+        else: 
+            raise ValueError('Bad model type.')
+        self.attn_lin = nn.Linear(dim_data, dim_treat)
+        self.attn     = MultiHeadedAttention(num_heads, dim_treat)
+
+    def p_X(self, X, A, B, Am):
+        base_cat = B[:,None,:].repeat(1, max(1, X.shape[1]-1), 1)
+        mtype    = self.hparams['mtype']
+        Aval = A[:,:-1,:]; Am_res = Am[:,:-1,:-1]
+        # attn_cat = torch.cat([X[:,:-1,:], base_cat], -1)
+        attn_cat = X[:,:-1,:]
+        res  = self.attn(self.attn_lin(attn_cat), Aval, Aval, mask=Am_res, use_matmul=True)
+        if mtype =='carry_forward':
+            p_x_mu   = X[:,:-1,:]
+        elif mtype=='linear_prior':
+            p_x_mu   = self.model_mu(X[:,:-1,:], res, base_cat)
+        elif 'logcellkill' in mtype or 'treatment_exp' in mtype or 'gated' in mtype or 'moe' in mtype: 
+            cat      = torch.cat([X[:,:-1,:], res, base_cat], -1)
+            p_x_mu   = self.model_mu(cat, torch.cat([res[...,[0]], base_cat, res[...,1:]],-1))
+        elif mtype == 'attn_transition': 
+            cat  = torch.cat([X[:,:-1,:], res, base_cat], -1)
+            p_x_mu   = self.model_mu(cat, torch.cat([res[...,[0]], base_cat, res[...,1:]],-1))
+        elif 'nl' in mtype:
+            cat      = torch.cat([X[:,:-1,:], res, base_cat],-1)
+            p_x_mu   = self.model_mu(cat)
+        else: 
+            p_x_mu   = self.model_mu(X[:,:-1,:])
+        cat      = torch.cat([X[:,:-1,:], res, base_cat],-1)
+        p_x_sig  = torch.nn.functional.softplus(self.model_sig(cat))
+        return p_x_mu, p_x_sig 
+    
+    def get_loss(self, B, X, A, M, Y, CE, Am, anneal = 1., return_reconstruction = False):
+        _, _, lens         = get_masks(M)
+        B, X, A, M, Y, CE, Am  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1], Am[lens>1]
+        p_x_mu, p_x_std    = self.p_X(X, A, B, Am)
+        masked_nll = masked_gaussian_nll_3d(X[:,1:,:], p_x_mu, p_x_std, M[:,1:,:])
+        nll        = masked_nll.sum(-1).sum(-1)
+        if return_reconstruction:
+            return (nll, p_x_mu*M[:,1:,:], p_x_std*M[:,1:,:])
+        else:
+            return (nll,)
+    
+    def forward(self, B, X, A, M, Y, CE, Am, anneal = 1.):
+        (nll,)     = self.get_loss(B, X, A, M, Y, CE, Am, anneal = anneal)
+        reg_loss   = torch.mean(nll)
+        for name,param in self.named_parameters():
+            if self.reg_all:
+                # reg_loss += self.hparams['C']*apply_reg(param, reg_type=self.hparams['reg_type'])
+                reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
+            else:
+                if 'weight' in name:
+                    reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
+        return (torch.mean(nll), torch.mean(nll), torch.tensor(0.), torch.tensor(0.)), torch.mean(reg_loss) 
+    
+    def sample(self, T_forward, X, A, B, Am):
+        raise NotImplemented()
+    
+    def inspect(self, T_forward, T_condition, B, X, A, M, Y, CE, Am, restrict_lens = False):
+        raise NotImplemented()
+    
+    def predict(self, **kwargs):
+        raise NotImplemented()
+
+
 
 
 

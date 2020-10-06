@@ -9,8 +9,10 @@ import torch.nn as nn
 from distutils.util import strtobool
 from models.base import Model
 from models.utils import *
+from models.multi_head_att import MultiHeadedAttention
 from models.ssm.inference import RNN_STInf, Attention_STInf
 from models.iefs.gated import GatedTransition
+from models.iefs.att_iefs import AttentionIEFTransition
 from models.iefs.moe import MofE
 from pyro.distributions import Normal, Independent, Categorical, LogNormal
 from typing import List, Tuple
@@ -21,23 +23,16 @@ from torch.autograd import Variable
 from argparse import ArgumentParser
 
 class SSM(Model): 
-    def __init__(self, 
-                 dim_stochastic: int = 48,
-                 dim_hidden: int = 300, 
-                 etype: str = 'linear', 
-                 ttype: str = 'linear',
-                 inftype: str = 'rnn',
-                 C: float = 0., 
-                 reg_all: bool = True, 
-                 reg_type: str = 'l1', 
-                 **kwargs
-                ): 
-        super(SSM, self).__init__()
+    def __init__(self, trial, **kwargs): 
+        super(SSM, self).__init__(trial)
         self.save_hyperparameters()
 
     def init_model(self): 
         ttype       = self.hparams['ttype']; etype = self.hparams['etype']
-        dim_hidden  = self.hparams['dim_hidden']; dim_stochastic = self.hparams['dim_stochastic']
+        dim_hidden  = self.hparams['dim_hidden']
+        num_heads   = self.hparams['nheads']
+        # dim_stochastic = self.hparams['dim_stochastic']
+        dim_stochastic = self.trial.suggest_int('dim_stochastic',16,256)
         dim_data    = self.hparams['dim_data']
         dim_base    = self.hparams['dim_base']
         dim_treat   = self.hparams['dim_treat']
@@ -49,13 +44,13 @@ class SSM(Model):
 
         # Inference Network
         if inftype == 'rnn':
-            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, combiner_type = combiner_type)
         elif inftype == 'rnn_bn':
-            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, use_bn=True, combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, use_bn=True, combiner_type = combiner_type)
         elif inftype == 'rnn_relu':
-            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, nl='relu', combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, nl='relu', combiner_type = combiner_type)
         elif inftype == 'att':
-            self.inf_network    = Attention_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, nheads = nheads, post_approx = post_approx, rank = rank)
+            self.inf_network    = Attention_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, nheads = num_heads, post_approx = post_approx, rank = rank)
         else:
             raise ValueError('Bad inference type')
 
@@ -64,6 +59,7 @@ class SSM(Model):
             self.e_mu    = nn.Linear(dim_stochastic, dim_data)
             self.e_sigma = nn.Linear(dim_stochastic, dim_data)
         elif etype  == 'nl':
+            dim_hidden   = self.trial.suggest_int('dim_hidden',100,500)
             emodel       = nn.Sequential(nn.Linear(dim_stochastic, dim_hidden), nn.ReLU(True))
             self.e_mu    = nn.Sequential(emodel, nn.Linear(dim_hidden, dim_data))
             self.e_sigma = nn.Sequential(emodel, nn.Linear(dim_hidden, dim_data))
@@ -73,10 +69,10 @@ class SSM(Model):
         # Transition Function
         if self.hparams['include_baseline']:
             self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat+dim_base, dim_hidden, ttype, \
-                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic)                
+                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)                
         else:
             self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat, dim_hidden, ttype, \
-                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic)
+                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)
         
         # Prior over Z1
         self.prior_W        = nn.Linear(dim_treat+dim_data+dim_base, dim_stochastic)
@@ -155,9 +151,69 @@ class SSM(Model):
         '''
             
     def imp_sampling(self, B, X, A, M, Y, CE, anneal = 1., imp_samples=100, idx = -1, mask = None):
-        raise NotImplemented()
+        _, _, lens = get_masks(M)
+        B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
+        m_t, m_g_t, _      = get_masks(M[:,1:,:])
+
+        ll_estimates   = torch.zeros((imp_samples,X.shape[0])).to(X.device)
+        ll_priors      = torch.zeros((imp_samples,X.shape[0])).to(X.device)
+        ll_posteriors  = torch.zeros((imp_samples,X.shape[0])).to(X.device)
+
+        X0 = X[:,0,:]; Xt = X[:,1:,:]; A0 = A[:,0,:]
+        inp_cat  = torch.cat([B, X0, A0], -1)
+        mu1      = self.prior_W(inp_cat)[:,None,:]
+        sig1     = torch.nn.functional.softplus(self.prior_sigma(inp_cat))[:,None,:]
+        
+        for sample in range(imp_samples): 
+            Z_s, q_zt = self.inf_network(X, A, M, B)
+            Tmax = Z_s.shape[-2]
+            p_x_mu, p_x_std    = self.p_X_Z(Z_s, A[:,1:Tmax+1,[0]])
+            masked_nll         = masked_gaussian_nll_3d(X[:,1:Tmax+1,:], p_x_mu, p_x_std, M[:,1:Tmax+1,:]) # (bs,T,D)
+
+            if idx != -1: 
+                masked_ll = -1*masked_nll[...,[idx]].sum(-1).sum(-1)
+            elif mask is not None: 
+                mask = mask[...,:Tmax]
+                masked_ll = -1*(masked_nll.sum(-1)*mask).sum(-1)
+            else: 
+                masked_ll          = -1*masked_nll.sum(-1).sum(-1)
+
+            # prior
+            if self.hparams['augmented']: 
+                Zinp = torch.cat([Z_s[:,:-1,:], Xt[:,:-1,:]], -1)
+            else: 
+                Zinp = Z_s[:,:-1,:]
+            if self.hparams['include_baseline']:
+                Aval = A[:,1:Tmax,:]
+                Acat = torch.cat([Aval[...,[0]],B[:,None,:].repeat(1,Aval.shape[1],1), Aval[...,1:]],-1)
+                mu2T, sig2T = self.transition_fxn(Zinp, Acat)
+            else:
+                mu2T, sig2T = self.transition_fxn(Zinp, A[:,1:Tmax,:])
+            mu_prior, std_prior     = torch.cat([mu1,mu2T],1), torch.cat([sig1,sig2T],1)
+            ll_prior     = -1*masked_gaussian_nll_3d(Z_s, mu_prior, std_prior, m_t[:,:Tmax,None])
+
+            # posterior 
+            ll_posterior = -1*masked_gaussian_nll_3d(Z_s, q_zt.mean, q_zt.stddev, m_t[:,:Tmax,None])
+
+            # store values 
+            ll_estimates[sample]  = masked_ll
+            if idx != -1: 
+                ll_priors[sample] = ll_prior[...,[idx]].sum(-1).sum(-1)
+                ll_posteriors[sample] = ll_posterior[...,[idx]].sum(-1).sum(-1)
+            elif mask is not None: 
+                mask = mask[...,:Tmax]
+                ll_priors[sample] = (ll_prior.sum(-1)*mask).sum(-1)
+                ll_posteriors[sample] = (ll_posterior.sum(-1)*mask).sum(-1)
+            else: 
+                ll_priors[sample] = ll_prior.sum(-1).sum(-1)
+                ll_posteriors[sample] = ll_posterior.sum(-1).sum(-1)
+
+        nll_estimate = -1*(torch.logsumexp(ll_estimates + ll_priors - ll_posteriors, dim=0) - np.log(imp_samples))
+        return nll_estimate, torch.mean(nll_estimate)
     
     def forward(self, B, X, A, M, Y, CE, anneal = 1.):
+        if self.hparams.clock_ablation: 
+            A[...,0] = torch.ones(A.shape[1])
         if self.training:
             if self.hparams['elbo_samples']>1:
                 B, X = torch.repeat_interleave(B, repeats=self.elbo_samples, dim=0), torch.repeat_interleave(X, repeats=self.elbo_samples, dim=0)
@@ -169,11 +225,12 @@ class SSM(Model):
         reg_loss   = torch.mean(neg_elbo)
         
         for name,param in self.named_parameters():
-            if self.hparams['reg_all']:
-                reg_loss += self.hparams['C']*apply_reg(param, reg_type=self.hparams['reg_type'])
+            if self.reg_all:
+                # reg_loss += self.hparams['C']*apply_reg(param, reg_type=self.hparams['reg_type'])
+                reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
             else:
-                if 'weight' in name:
-                    reg_loss += self.hparams['C']*apply_reg(param, reg_type=self.hparams['reg_type'])
+                if 'attn' not in name:
+                    reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
         loss = torch.mean(reg_loss)
         return (torch.mean(neg_elbo), torch.mean(masked_nll), torch.mean(kl), torch.ones_like(kl)), loss
     
@@ -283,7 +340,7 @@ class SSM(Model):
         parser.add_argument('--elbo_samples', type=int, default=1, help='number of samples to run through inference network')        
         parser.add_argument('--augmented', type=strtobool, default=False, help='SSM augmented')        
         parser.add_argument('--C', type=float, default=.01, help='regularization strength')
-        parser.add_argument('--nheads', type=int, default=1, help='number of heads for attention inference network')        
+        parser.add_argument('--nheads', type=int, default=1, help='number of heads for attention inference network and generative model')        
         parser.add_argument('--rank', type=int, default=5, help='rank of matrix for low_rank posterior approximation')
         parser.add_argument('--combiner_type', type=str, default='pog', help='combiner function used in inference network')
         parser.add_argument('--reg_all', type=strtobool, default=False, help='regularize all weights or only subset')    
@@ -291,9 +348,147 @@ class SSM(Model):
         parser.add_argument('--alpha1_type', type=str, default='linear', help='alpha1 parameterization in TreatExp IEF')
         parser.add_argument('--otype', type=str, default='linear', help='final layer of GroMOdE IEF (linear, identity, nl)')
         parser.add_argument('--add_stochastic', type=strtobool, default=False, help='conditioning alpha-1 of TEXP on S_[t-1]')
+        parser.add_argument('--clock_ablation', type=strtobool, default=False, help='set to true to run without local clock')
 
         return parser 
+
+class SSMAtt(SSM): 
+    def __init__(self, trial, **kwargs): 
+        super(SSMAtt, self).__init__(trial)
+        self.save_hyperparameters()
+
+    def init_model(self): 
+        ttype       = 'attn_transition'; etype = self.hparams['etype']
+        dim_hidden  = self.hparams['dim_hidden']
+        # dim_stochastic = self.hparams['dim_stochastic']
+        dim_stochastic = self.trial.suggest_int('dim_stochastic',16,64)
+        num_heads   = self.hparams['nheads']
+        dim_data    = self.hparams['dim_data']
+        dim_base    = self.hparams['dim_base']
+        dim_treat   = self.hparams['dim_treat']
+        post_approx = self.hparams['post_approx']
+        inftype     = self.hparams['inftype']; etype = self.hparams['etype']; ttype = self.hparams['ttype']
+        augmented   = self.hparams['augmented']; alpha1_type = self.hparams['alpha1_type']
+        rank        = self.hparams['rank']; combiner_type = self.hparams['combiner_type']; nheads = self.hparams['nheads']
+        add_stochastic = self.hparams['add_stochastic']
+
+        # Inference Network
+        if inftype == 'rnn':
+            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, combiner_type = combiner_type)
+        elif inftype == 'rnn_bn':
+            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, use_bn=True, combiner_type = combiner_type)
+        elif inftype == 'rnn_relu':
+            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, nl='relu', combiner_type = combiner_type)
+        elif inftype == 'att':
+            self.inf_network    = Attention_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, nheads = num_heads, post_approx = post_approx, rank = rank)
+        else:
+            raise ValueError('Bad inference type')
+
+        # Emission Function
+        if etype == 'lin':
+            self.e_mu    = nn.Linear(dim_stochastic, dim_data)
+            self.e_sigma = nn.Linear(dim_stochastic, dim_data)
+        elif etype  == 'nl':
+            dim_hidden   = self.trial.suggest_int('dim_hidden',100,500)
+            emodel       = nn.Sequential(nn.Linear(dim_stochastic, dim_hidden), nn.ReLU(True))
+            self.e_mu    = nn.Sequential(emodel, nn.Linear(dim_hidden, dim_data))
+            self.e_sigma = nn.Sequential(emodel, nn.Linear(dim_hidden, dim_data))
+        else:
+            raise ValueError('bad etype')
+
+        # Transition Function
+        if self.hparams['include_baseline']:
+            self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat+dim_base, dim_hidden, ttype, \
+                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)                
+        else:
+            self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat, dim_hidden, ttype, \
+                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)
+        
+        # Prior over Z1
+        self.prior_W        = nn.Linear(dim_treat+dim_data+dim_base, dim_stochastic)
+        self.prior_sigma    = nn.Linear(dim_treat+dim_data+dim_base, dim_stochastic)
+
+        # Attention 
+        self.attn     = MultiHeadedAttention(num_heads, dim_treat+dim_base)
+        self.attn_lin = nn.Linear(dim_stochastic, dim_treat+dim_base)
+
+    def p_Zt_Ztm1(self, Zt, A, B, X, A0, Am, eps = 0.):
+        X0 = X[:,0,:]; Xt = X[:,1:,:]
+        inp_cat  = torch.cat([B, X0, A0], -1)
+        mu1      = self.prior_W(inp_cat)[:,None,:]
+        sig1     = torch.nn.functional.softplus(self.prior_sigma(inp_cat))[:,None,:]
+        
+        Tmax     = Zt.shape[1]
+        if self.hparams['augmented']: 
+            Zinp = torch.cat([Zt[:,:-1,:], Xt[:,:-1,:]], -1)
+        else: 
+            Zinp = Zt[:,:-1,:]
+        Aval = A[:,1:Tmax,:]; Am_res = Am[:,1:Tmax,1:Tmax]
+        if self.hparams['include_baseline']:
+            Acat = torch.cat([Aval[...,[0]],B[:,None,:].repeat(1,Aval.shape[1],1), Aval[...,1:]],-1)
+            res  = self.attn(self.attn_lin(Zinp), Acat, Acat, mask=Am_res, use_matmul=True)
+            mu2T, sig2T = self.transition_fxn(Zinp, res, eps = eps)
+        else:
+            res  = self.attn(self.attn_lin(Zinp), Aval, Aval, mask=Am_res, use_matmul=True) # res
+            mu2T, sig2T = self.transition_fxn(Zinp, res, eps = eps)
+        mu, sig     = torch.cat([mu1,mu2T],1), torch.cat([sig1,sig2T],1)
+        return Independent(Normal(mu, sig), 1)
+
+    def get_loss(self, B, X, A, M, Y, CE, Am, anneal = 1., return_reconstruction = False, with_pred = False):
+        _, _, lens         = get_masks(M)
+        B, X, A, M, Y, CE, Am = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1], Am[lens>1]
+        m_t, m_g_t, _      = get_masks(M[:,1:,:])
+        Z_t, q_zt          = self.inf_network(X, A, M, B)
+        Tmax               = Z_t.shape[1]
+        p_x_mu, p_x_std    = self.p_X_Z(Z_t, A[:,1:Tmax+1,[0]])
+        p_zt               = self.p_Zt_Ztm1(Z_t, A, B, X, A[:,0,:], Am)
+        masked_nll         = masked_gaussian_nll_3d(X[:,1:Tmax+1,:], p_x_mu, p_x_std, M[:,1:Tmax+1,:])
+        full_masked_nll    = masked_nll
+        masked_nll         = masked_nll.sum(-1).sum(-1)
     
+        if with_pred:
+            p_x_mu_pred, p_x_std_pred = self.p_X_Z(p_zt.mean, A[:,:Z_t.shape[1],[0]])
+            masked_nll_pred           = masked_gaussian_nll_3d(X[:,1:Tmax+1,:], p_x_mu_pred, p_x_std_pred, M[:,1:Tmax+1,:])
+            masked_nll_pred           = masked_nll_pred.sum(-1).sum(-1)
+            masked_nll = (masked_nll+masked_nll_pred)*0.5
+        kl_t       = q_zt.log_prob(Z_t)-p_zt.log_prob(Z_t)
+        masked_kl_t= (m_t[:,:Tmax]*kl_t).sum(-1)
+        neg_elbo   = masked_nll + anneal*masked_kl_t
+    
+        if return_reconstruction:
+            return (neg_elbo, masked_nll, masked_kl_t, torch.ones_like(masked_kl_t), p_x_mu*M[:,1:,:], p_x_std*M[:,1:,:])
+        else:
+            return (neg_elbo, masked_nll, masked_kl_t, torch.ones_like(masked_kl_t))
+
+    def forward(self, B, X, A, M, Y, CE, Am, anneal = 1.):
+        if self.training:
+            if self.hparams['elbo_samples']>1:
+                B, X = torch.repeat_interleave(B, repeats=self.elbo_samples, dim=0), torch.repeat_interleave(X, repeats=self.elbo_samples, dim=0)
+                A, M = torch.repeat_interleave(A, repeats=self.elbo_samples, dim=0), torch.repeat_interleave(M, repeats=self.elbo_samples, dim=0)
+                Y, CE= torch.repeat_interleave(Y, repeats=self.elbo_samples, dim=0), torch.repeat_interleave(CE, repeats=self.elbo_samples, dim=0)
+            neg_elbo, masked_nll, kl, _  = self.get_loss(B, X, A, M, Y, CE, Am, anneal = anneal, with_pred = True)
+        else:
+            neg_elbo, masked_nll, kl, _  = self.get_loss(B, X, A, M, Y, CE, Am, anneal = anneal, with_pred = False)
+        reg_loss   = torch.mean(neg_elbo)
+        for name,param in self.named_parameters():
+            if self.reg_all:
+                # reg_loss += self.hparams['C']*apply_reg(param, reg_type=self.hparams['reg_type'])
+                reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
+            else:
+                if 'attn' not in name:
+                    reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
+        loss = torch.mean(reg_loss)
+        return (torch.mean(neg_elbo), torch.mean(masked_nll), torch.mean(kl), torch.ones_like(kl)), loss
+
+    def forward_sample(self, A, T_forward, Z_start = None, B=None, X0=None, A0=None, eps = 0.):
+        pass 
+
+    def inspect(self, T_forward, T_condition, B, X, A, M, Y, CE, Am, restrict_lens = False, nsamples = 1, eps = 0.):
+        pass
+
+    def inspect_trt(self, B, X, A, M, Y, CE, Am, nsamples=3): 
+        pass 
+
 
 class TransitionFunction(nn.Module):
     def __init__(self, 
@@ -305,7 +500,8 @@ class TransitionFunction(nn.Module):
                  augmented: bool = False, 
                  alpha1_type: str = 'linear', 
                  otype: str = 'linear', 
-                 add_stochastic: bool = False):
+                 add_stochastic: bool = False, 
+                 num_heads: int = 1):
         super(TransitionFunction, self).__init__()
         self.dim_stochastic  = dim_stochastic
         self.dim_treat       = dim_treat
@@ -343,6 +539,12 @@ class TransitionFunction(nn.Module):
                 avoid_init = True
             self.t_mu               = GatedTransition(dim_input, dim_treat, avoid_init = avoid_init, dim_output=dim_stochastic, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic)
             self.t_sigma            = nn.Linear(dim_input+dim_treat, dim_stochastic)
+        elif self.ttype == 'attn_transition': 
+            avoid_init = False
+            if self.dim_data != 16:
+                avoid_init = True
+            self.t_mu               = AttentionIEFTransition(dim_input, dim_treat, avoid_init = avoid_init, dim_output=dim_stochastic, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic, num_heads=num_heads)
+            self.t_sigma            = nn.Linear(dim_input+dim_treat, dim_stochastic)
         elif self.ttype == 'moe': 
             self.t_mu               = MofE(dim_input, dim_treat, dim_output=dim_stochastic, eclass='nl', num_experts=3) 
             self.t_sigma            = nn.Linear(dim_input+dim_treat, dim_stochastic)
@@ -352,7 +554,8 @@ class TransitionFunction(nn.Module):
     def apply(self, fxn, z, u, eps=0.):
         if 'Monotonic' in fxn.__class__.__name__ or 'LogCellTransition' in fxn.__class__.__name__ or 'LogCellKill' in fxn.__class__.__name__ \
             or 'TreatmentExp' in fxn.__class__.__name__ or 'GatedTransition' in fxn.__class__.__name__ or 'Synthetic' in fxn.__class__.__name__ \
-            or 'MofE' in fxn.__class__.__name__ or 'Ablation1' in fxn.__class__.__name__ or 'Ablation2' in fxn.__class__.__name__:
+            or 'MofE' in fxn.__class__.__name__ or 'Ablation1' in fxn.__class__.__name__ or 'Ablation2' in fxn.__class__.__name__ \
+            or 'AttentionIEFTransition' in fxn.__class__.__name__:
             return fxn(z, u, eps)
         else:
             return fxn(torch.cat([z, u],-1))
