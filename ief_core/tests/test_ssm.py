@@ -871,25 +871,6 @@ def test_ssm_syn_nolc():
 
 
 if __name__ == '__main__':
-    # lins = [(3,16,'l2',.01,True),(4,16,'l2',.01,True)]
-    # nls  = [(4,48,'l2',.1,True)]
-    # moes  = [(1,48,'l2',.1,True),(2,48,'l2',.1,True),(3,48,'l2',.1,True),(4,48,'l2',.1,True)]
-    # s = 'nl'
-    # if s == 'lin': 
-    #     print('[running SSM LIN models]')
-    #     for l in lins: 
-    #         fold, ds, reg_type, C, reg_all = l
-    #         test_ssm_lin_mm(ttype='lin', fold=fold, reg_all=reg_all, reg_type=reg_type, C=C, ds=ds)
-    # elif s == 'nl': 
-    #     print('[running SSM NL models]')
-    #     for nl in nls: 
-    #         fold, ds, reg_type, C, reg_all = nl
-    #         test_ssm_nl_mm(ttype='nl', fold=fold, reg_all=reg_all, reg_type=reg_type, C=C, ds=ds)
-    # elif s == 'moe': 
-    #     print('[running SSM MOE models]')
-    #     for moe in moes: 
-    #         fold, ds, reg_type, C, reg_all = moe 
-    #         test_ssm_moe_mm(ttype='moe', fold=fold, reg_all=reg_all, reg_type=reg_type, C=C, ds=ds)
     samples = [20000]
     for ss in samples: 
         test_ssm_gated_syn(ttype='attn_transition', num_samples=ss)
@@ -897,14 +878,11 @@ if __name__ == '__main__':
         test_ssm_gated_syn(ttype='nl', num_samples=ss)
         test_ssm_gated_syn(ttype='moe', num_samples=ss)
     
-#     test_ssm_syn_nolc()
 #     configs = ['attn_transition', 'lin', 'nl']
 #     for config in configs: 
 #         test_ssm_gated_syn(ttype=config)
-#     print('[RUNNING SSM ATTN (w/o trtexp)]')
-#     test_ssm_gated_syn()
+
 #     configs = [(0, 0.01, True, 'l2'), (1, 0.1, True, 'l2'), (2, 0.01, False, 'l1'), (3, 0.1, True, 'l2'), (4, 0.01, False, 'l2')]
-#     configs = [(3, 0.1, True, 'l2'), (4, 0.01, False, 'l2')]
 #     for config in configs: 
 #         fold, C, reg_all, reg_type = config
 #         test_ssm_gated_mm(fold=fold, reg_all=reg_all, C=C, reg_type=reg_type)
@@ -912,4 +890,4 @@ if __name__ == '__main__':
 #             test_ssm_gated_mm(fold,True)
 #         else: 
 #             test_ssm_gated_mm(fold,False)
-# (fold=1, reg_all=True, C=0.01, reg_type='l2'):
+
