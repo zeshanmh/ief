@@ -1,4 +1,4 @@
-# IEF 
+# Intervention Effect Functions 
 
 This repo contains code to recreate the results from the paper, "Attentive Pharmacodynamic State Space Modeling." It also provides the user with scripts to train the models PK-PD deep generative models detailed in the paper (arxiv link forthcoming). We have used PyTorch Lightning to build out our models (see https://pytorch-lightning.readthedocs.io/en/latest/).
 
