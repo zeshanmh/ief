@@ -4,7 +4,6 @@ This repository contains code to recreate the results from the paper, "Attentive
 
 To run this repo, 
 1. **Set up the environment**: Run `bash requirements.sh`. Each time you use this repository, start with `conda activate disease_prog`.
-2. **Set configuration variables**: 
 
 ## Running a Hyperparameter Sweep: 
 
