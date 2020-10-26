@@ -27,7 +27,6 @@ class Model(pl.LightningModule):
             torch.backends.cudnn.deterministic = True
             torch.backends.cudnn.benchmark = False
         self.trial = trial
-        # self.lr = trial.suggest_loguniform('lr', 1e-5, 1e-2)
         self.bs = trial.suggest_categorical('bs', [600,1500])
         self.lr = 1e-3
         self.C  = trial.suggest_categorical('C', [.01,.1,1])
@@ -68,18 +67,15 @@ class Model(pl.LightningModule):
         return {'loss': avg_loss, 'log': tensorboard_logs, 'progress_bar': dict_}
 
     def validation_step(self, batch, batch_idx):
-        # import pdb; pdb.set_trace()
         (nelbo, nll, kl, _), _ = self.forward(*batch, anneal = 1.)
         if self.hparams['imp_sampling']: 
-            pass
-            '''
             batch_nll      = []
             for i, valid_batch_loader in enumerate(valid_loader): 
                 nll_estimate   = self.imp_sampling(*valid_batch_loader, nelbo, anneal = 1.)
                 nll_estimate   = nll_estimate.item()
                 batch_nll.append(nll_estimate)
             nll_estimate = np.mean(batch_nll)
-            '''
+            
         if self.hparams['eval_type'] != 'nelbo': 
             if 'ord' not in self.hparams['loss_type']: 
                 preds, _ = self.predict(*batch)
@@ -139,7 +135,6 @@ class Model(pl.LightningModule):
 
     def configure_optimizers(self): 
         if self.hparams['optimizer_name'] == 'adam': 
-            # opt = torch.optim.Adam(self.parameters(), lr=self.hparams['lr']) 
             opt = torch.optim.Adam(self.parameters(), lr=self.lr) 
             return opt
         elif self.hparams['optimizer_name'] == 'rmsprop': 
@@ -149,6 +144,13 @@ class Model(pl.LightningModule):
             return SWA(opt, swa_start=100, swa_freq=50, swa_lr=self.hparams['lr'])
 
     def setup(self, stage): 
+        ''' 
+        When adding a dataset (e.g. VA MM dataset), the data loading function should return 
+        the following structure: 
+            key: fold number, val: dictionary ==> {key: 'train', 'test', 'valid', \
+                val: dictionary ==> {key: data type ('x','m'), val: np matrix}}
+        See load_mmrf() function in data.py file in ml_mmrf folder.
+        '''
         fold = self.hparams['fold']
         if self.hparams['dataset'] == 'mm': 
             # ddata = load_mmrf(fold_span = [fold], \
@@ -233,14 +235,6 @@ class Model(pl.LightningModule):
         else: 
             data = TensorDataset(B[idx_sort], X[idx_sort], A[idx_sort], M[idx_sort], Y[idx_sort], CE[idx_sort])
         data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
-        # if tvt == 'train': 
-        #     data        = resample(data, device)
-        #     data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
-        # elif tvt == 'valid' and not oversample:
-        #     data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
-        # else: 
-        #     data        = resample(data, device)
-        #     data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
         return data, data_loader
 
     @pl.data_loader

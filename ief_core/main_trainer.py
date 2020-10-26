@@ -16,6 +16,11 @@ from models.rnn import GRU
 from models.sfomm import SFOMM
 from distutils.util import strtobool
 
+'''
+Name: main_trainer.py 
+Purpose: High-level training script 
+Usage: Not meant to use directly, but rather will be called by launch_run.py.
+'''
 
 class MetricsCallback(Callback):
     """PyTorch Lightning metric callback."""
@@ -26,39 +31,6 @@ class MetricsCallback(Callback):
 
     def on_validation_end(self, trainer, pl_module):
         self.metrics.append(trainer.callback_metrics)
-
-def main(args):
-    dict_args = vars(args)
-
-    # pick model
-    if args.model_name == 'fomm':
-        model = FOMM(**dict_args)
-    elif args.model_name == 'fomm_att':
-        model = FOMMAtt(**dict_args)
-    elif args.model_name == 'ssm': 
-        model = SSM(**dict_args)
-    elif args.model_name == 'ssm_att': 
-        model = SSMAtt(**dict_args)
-    elif args.model_name == 'gru':
-        model = GRU(**dict_args)
-    elif args.model_name == 'sfomm': 
-        model = SFOMM(**dict_args)
-    elif args.model_name == 'sdmm': 
-        model = SDMM(**dict_args)
-
-    if not args.logger: 
-        logger = False
-    elif args.fname is not None: 
-        logger = TensorBoardLogger('tbp_logs', name=os.path.join('tbp_logs',args.fname))
-    else: 
-        logger = TensorBoardLogger('tbp_logs')
-
-    if args.checkpoint_callback: 
-        checkpoint_callback = ModelCheckpoint(filepath='./tbp_logs/checkpoints/' + args.fname + '_{epoch:05d}-{val_loss:.2f}')
-    else: 
-        checkpoint_callback = False
-    trainer = Trainer.from_argparse_args(args, deterministic=True, logger=logger, gpus=[args.gpu_id], checkpoint_callback=checkpoint_callback)
-    trainer.fit(model)
 
 def objective(trial, args): 
     dict_args = vars(args)
@@ -91,10 +63,7 @@ def objective(trial, args):
         early_stop_callback=PyTorchLightningPruningCallback(trial, monitor='val_loss')
     )
     trainer.fit(model)
-    # print(f"best nll: {min([x['val_loss'].item() for x in metrics_callback.metrics])}")
-    # print(f"last nll: {metrics_callback.metrics[-1]['val_loss'].item()}")
     return min([x['val_loss'].item() for x in metrics_callback.metrics])
-    # return metrics_callback.metrics[-1]['val_loss'].item()
 
 if __name__ == '__main__':
     parser = ArgumentParser()
@@ -118,7 +87,7 @@ if __name__ == '__main__':
     parser.add_argument('--bs', default=600, type=int, help='batch size')
     parser.add_argument('--fold', default=1, type=int)
     parser.add_argument('--seed', default=0, type=int)
-    parser.add_argument('--optuna', type=strtobool, default=False, help='whether to use optuna for optimization')
+    parser.add_argument('--optuna', type=strtobool, default=True, help='whether to use optuna for optimization')
     parser.add_argument('--num_optuna_trials', default=100, type=int)
 
     # THIS LINE IS KEY TO PULL THE MODEL NAME
@@ -169,6 +138,3 @@ if __name__ == '__main__':
             fi.write(f'\t\tValue: {trial.value}\n')
             for k,v in trial.params.items(): 
                 fi.write(f'\t\t{k}: {v}\n')
-
-    else: 
-        main(args)

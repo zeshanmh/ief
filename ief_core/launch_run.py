@@ -12,6 +12,13 @@ import time
 from collections import OrderedDict
 from itertools import product
 
+'''
+Name: launch_run.py 
+Purpose: High level script that is used to launch a set of runs for hyperparam
+sweep. 
+Usage: python launch_run.py --config [PATH TO CONFIG]
+'''
+
 SLEEP = 10
 CTR_LIM = 12
 
@@ -39,7 +46,6 @@ if __name__ == '__main__':
     # Load config file
     with open(args.config, 'rb') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
-        # config = json.load(f, object_pairs_hook=OrderedDict)
     
     # String in JSON config
     name = config.get('fname')
