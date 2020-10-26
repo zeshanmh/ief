@@ -12,6 +12,6 @@ To run a hyperparameter sweep on a new dataset:
 
 To train a model given a specific set of hyperparameters, 
 1. **Define train function**: If you would like to train a single model, you can define a ```train``` function similar to the examples shown in ```ief_core/tests/short_run.py```. These examples show how to instantiate and specify the hyperparameters of a model.
-2. **Run python file**:  Then, simply run ```python short_run.py``` and a checkpoint of the model will be saved in ```ief_core/tests/checkpoints```. 
+2. **Run python file**:  Then, simply run ```python ief_core/tests/short_run.py``` and a checkpoint of the model will be saved in ```ief_core/tests/checkpoints```. 
 
 Finally, to recreate the plots in the paper, see ```examples/model_analyses_aaai.ipynb```. 
