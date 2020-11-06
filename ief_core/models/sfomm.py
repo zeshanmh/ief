@@ -13,6 +13,7 @@ from models.ssm.inference import RNN_STInf, Attention_STInf
 from models.iefs.gated import GatedTransition
 from models.iefs.moe import MofE
 from models.iefs.treatexp import TreatmentExponential
+from models.iefs.att_iefs import AttentionIEFTransition
 from pyro.distributions import Normal, Independent, Categorical, LogNormal
 from typing import List, Tuple
 from torch import Tensor
@@ -21,34 +22,26 @@ from collections import namedtuple
 from typing import List, Tuple
 from torch.autograd import Variable
 from argparse import ArgumentParser
-from spacecutter.models import OrdinalLogisticModel
-# from spacecutter.losses import CumulativeLinkLoss
-from spacecutter.losses import cumulative_link_loss
-from spacecutter.callbacks import AscensionCallback
+# from spacecutter.models import OrdinalLogisticModel
+# # from spacecutter.losses import CumulativeLinkLoss
+# from spacecutter.losses import cumulative_link_loss
+# from spacecutter.callbacks import AscensionCallback
 
 class SFOMM(Model): 
-    def __init__(self, trial, 
-                 # dim_stochastic: int = 16, 
-                 # dim_hidden: int = 300, 
-                 # mtype: str = 'linear', 
-                 # inftype: str = 'rnn',
-                 # C: float = 0., 
-                 # reg_all: bool = True, 
-                 # reg_type: str = 'l1', 
-                 **kwargs
-                ): 
+    def __init__(self, trial, **kwargs): 
         super(SFOMM, self).__init__(trial)
         self.save_hyperparameters()
 
     def init_model(self):         
         mtype      = self.hparams['mtype']; otype = self.hparams['otype']
         alpha1_type = self.hparams['alpha1_type']
-        # dim_hidden = self.hparams['dim_hidden']
-        dim_stochastic = self.trial.suggest_int('dim_stochastic',16,64)
-        dim_hidden   = self.trial.suggest_int('dim_hidden',100,500)
+        dim_stochastic = self.trial.suggest_categorical('dim_stochastic',[4,16,48,64,128])
+#         dim_hidden   = self.trial.suggest_categorical('dim_hidden',[100,300,500])
+        dim_hidden = 300
         dim_data   = self.hparams['dim_data']
         dim_base   = self.hparams['dim_base']
         dim_treat  = self.hparams['dim_treat']
+        num_heads  = self.hparams['nheads']
         # dim_stochastic = self.hparams['dim_stochastic']
         add_stochastic = self.hparams['add_stochastic']
         # inftype    = self.hparams['inftype']
@@ -77,6 +70,13 @@ class SFOMM(Model):
             self.model_mu   = GatedTransition(dim_stochastic, dim_treat+dim_base, dim_hidden=dim_hidden, dim_output=dim_data, dim_input=dim_data*2, \
                                 use_te = False, avoid_init = avoid_init, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic)
             self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)
+        elif mtype == 'attn_transition': 
+            avoid_init = False
+            if dim_data != 16:
+                avoid_init = True
+            self.model_mu   = AttentionIEFTransition(dim_stochastic, dim_treat+dim_base, avoid_init = avoid_init, dim_output=dim_data,\
+                dim_input=dim_data*2, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic, num_heads=num_heads)
+            self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)    
         elif mtype == 'treatment_exp':
             self.model_mu   = TreatmentExponential(dim_stochastic, dim_treat, add_stochastic=add_stochastic, alpha1_type=alpha1_type, response_only=True)
             self.model_sig  = nn.Linear(dim_treat+dim_base+dim_data, dim_data)
@@ -93,19 +93,20 @@ class SFOMM(Model):
         self.prior_sigma    = torch.nn.Parameter(torch.ones(dim_stochastic)*0.1, requires_grad = True)
 
         # prediction 
-        self.num_classes = 3
+        self.num_classes = 2
         self.pred_W1     = nn.Linear(dim_stochastic, dim_hidden, bias = False)
         self.pred_W2     = nn.Linear(dim_hidden, self.num_classes, bias = False)
         self.pred_sigma  = torch.nn.Parameter(torch.ones(self.num_classes,)*0.1, requires_grad = True)
-        self.m_pred      = nn.Sequential(
-                            nn.Linear(dim_stochastic, dim_hidden),
-                            # nn.ReLU(True),
-                            # nn.Linear(dim_hidden, dim_hidden), 
-                            nn.ReLU(True),
-                            nn.Linear(dim_hidden, 1, bias=False)
-                        )
-        self.mord        = OrdinalLogisticModel(self.m_pred, self.num_classes)
-        # self.link_loss   = CumulativeLinkLoss()
+        if self.num_classes >= 3: 
+            self.m_pred      = nn.Sequential(
+                                nn.Linear(dim_stochastic, dim_hidden),
+                                # nn.ReLU(True),
+                                # nn.Linear(dim_hidden, dim_hidden), 
+                                nn.ReLU(True),
+                                nn.Linear(dim_hidden, 1, bias=False)
+                            )
+#             self.mord        = OrdinalLogisticModel(self.m_pred, self.num_classes)
+            # self.link_loss   = CumulativeLinkLoss()
 
         # treatment effect (for synthetic data)
         self.te_W1       = nn.Linear(dim_treat, dim_data)
@@ -115,7 +116,7 @@ class SFOMM(Model):
         if 'ord' not in self.hparams.loss_type: 
             mu = self.pred_W2(torch.sigmoid(self.pred_W1(Z)))
         else: 
-            mu = self.mord(Z)
+            mu = self.m_pred(Z)
         sigma = mu*0.+torch.nn.functional.softplus(self.pred_sigma)
         p_y_z = Independent(Normal(mu, sigma), 1)
         return p_y_z
@@ -165,7 +166,7 @@ class SFOMM(Model):
         patternsT  = patterns[:,None,:].repeat(1, max(1,X.shape[1]-1), 1)
         mtype      = self.hparams['mtype']
 
-        if mtype == 'gated':
+        if mtype == 'gated' or mtype == 'attn_transition':
             Aval     = A[:,:-1,:]
             cat      = torch.cat([X[:,:-1,:], patternsT], -1)
             p_x_mu   = self.model_mu(cat, torch.cat([Aval[...,[0]], base_cat, Aval[...,1:]],-1))
@@ -254,7 +255,7 @@ class SFOMM(Model):
 
             for t in range(1, T_forward):
                 x_prev     = obs_list[-1]
-                if mtype == 'gated':
+                if mtype == 'gated' or mtype == 'attn_transition':
                     Aval     = A[:,[t-1],:]
                     cat      = torch.cat([x_prev, patternsT[:,[t-1],:]], -1)
 #                     p_x_mu   = self.model_mu(x_prev, torch.cat([Aval[...,[0]], base, Aval[...,1:]],-1))
@@ -294,7 +295,7 @@ class SFOMM(Model):
         inp_x_post = self.sample(T_forward+1, X[:,T_condition-1:], A[:,T_condition-1:], B, Z_cond)
         inp_x_post = torch.cat([X[:,:T_condition], inp_x_post[:,1:]], 1) 
         empty      = torch.ones(X.shape[0], 3)
-        return nelbo, per_feat_nelbo, empty, empty, inp_x_post, inp_x, Z, torch.squeeze(p_Z .rsample((1,)))
+        return nelbo, per_feat_nelbo, empty, empty, inp_x_post, inp_x, Z, torch.squeeze(p_Z.rsample((1,)))
 
     def get_weights(self, Y): 
         # Y1 = torch.ones_like(Y); Y0 = torch.zeros_like(Y)     
@@ -338,6 +339,7 @@ class SFOMM(Model):
         parser.add_argument('--inftype', type=str, default='rnn', help='type of inference network')
         parser.add_argument('--otype', type=str, default='linear', help='final layer of GroMOdE IEF (linear, identity, nl)')
         parser.add_argument('--add_stochastic', type=strtobool, default=False, help='conditioning alpha-1 of TEXP on S_[t-1]')
+        parser.add_argument('--nheads', type=int, default=1, help='number of heads for attention inference network and generative model')        
 
         return parser 
 

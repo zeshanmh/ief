@@ -153,14 +153,15 @@ class Model(pl.LightningModule):
         '''
         fold = self.hparams['fold']
         if self.hparams['dataset'] == 'mm': 
-            # ddata = load_mmrf(fold_span = [fold], \
-            #                   digitize_K = 0, \
-            #                   digitize_method = 'uniform', \
-            #                   suffix='_2mos_tr', \
-            #                   restrict_markers=True, \
-            #                   add_syn_marker=True, \
-            #                   window='first_second')
-            ddata = load_mmrf(fold_span = [fold], digitize_K = 20, digitize_method = 'uniform', suffix='_2mos')
+            ddata = load_mmrf(fold_span = [fold], \
+                              digitize_K = 0, \
+                              digitize_method = 'uniform', \
+                              suffix='_2mos_tr', \
+                              restrict_markers=True, \
+                              add_syn_marker=True, \
+                              window='all', \
+                              data_aug=True)
+#             ddata = load_mmrf(fold_span = [fold], digitize_K = 20, digitize_method = 'uniform', suffix='_2mos')
 
         elif self.hparams['dataset'] == 'synthetic': 
             nsamples        = {'train':self.hparams['nsamples_syn'], 'valid':1000, 'test':200}
