@@ -44,11 +44,11 @@ class SSM(Model):
 
         # Inference Network
         if inftype == 'rnn':
-            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, combiner_type = combiner_type)
         elif inftype == 'rnn_bn':
-            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, use_bn=True, combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, use_bn=True, combiner_type = combiner_type)
         elif inftype == 'rnn_relu':
-            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, nl='relu', combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, nl='relu', combiner_type = combiner_type)
         elif inftype == 'att':
             self.inf_network    = Attention_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, nheads = num_heads, post_approx = post_approx, rank = rank)
         else:
@@ -280,9 +280,10 @@ class SSM(Model):
         
         neg_elbo       = torch.mean(masked_nll.sum(-1).sum(-1)+masked_kl_t)
         
-        _, _, lens         = get_masks(M)
-        idx_select         = lens>(T_forward+T_condition)
-        B, X, A, M, Y, CE  = B[idx_select], X[idx_select], A[idx_select], M[idx_select], Y[idx_select], CE[idx_select]
+        if T_condition != -1: 
+            _, _, lens         = get_masks(M)
+            idx_select         = lens>(T_forward+T_condition)
+            B, X, A, M, Y, CE  = B[idx_select], X[idx_select], A[idx_select], M[idx_select], Y[idx_select], CE[idx_select]
         
         x_forward_list = []
         for n in range(nsamples):
@@ -291,16 +292,19 @@ class SSM(Model):
         x_forward                      = torch.cat(x_forward_list,-1).mean(-1)
         x_forward                      = torch.cat([X[:,[0],:], x_forward], 1)
         
-        x_forward_conditional_list = []
-        for n in range(nsamples):
-            Z_t_cond, _                    = self.inf_network(X[:,:T_condition,:], A[:,:T_condition,:], M[:,:T_condition,:], B)
-            _,(_,x_forward_conditional,_)  = self.forward_sample(A[:,T_condition:,:], T_forward, Z_start = Z_t_cond[:,-1,:], B = B, eps = eps)
-            x_forward_conditional_list.append(x_forward_conditional[...,None])
+        if T_condition != -1: 
+            x_forward_conditional_list = []
+            for n in range(nsamples):
+                Z_t_cond, _                    = self.inf_network(X[:,:T_condition,:], A[:,:T_condition,:], M[:,:T_condition,:], B)
+                _,(_,x_forward_conditional,_)  = self.forward_sample(A[:,T_condition:,:], T_forward, Z_start = Z_t_cond[:,-1,:], B = B, eps = eps)
+                x_forward_conditional_list.append(x_forward_conditional[...,None])
+            
+            x_forward_conditional = torch.cat(x_forward_conditional_list, -1).mean(-1)
+            x_sample_conditional  = torch.cat([X[:,:T_condition,:], x_forward_conditional],1)
         
-        x_forward_conditional = torch.cat(x_forward_conditional_list, -1).mean(-1)
-        x_sample_conditional  = torch.cat([X[:,:T_condition,:], x_forward_conditional],1)
-        
-        return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_sample_conditional, x_forward
+            return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_sample_conditional, x_forward
+
+        return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_forward
 
     def inspect_trt(self, B, X, A, M, Y, CE, nsamples=3): 
         x_conditional_list = []
@@ -374,11 +378,11 @@ class SSMAtt(SSM):
 
         # Inference Network
         if inftype == 'rnn':
-            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, combiner_type = combiner_type)
         elif inftype == 'rnn_bn':
-            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, use_bn=True, combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, use_bn=True, combiner_type = combiner_type)
         elif inftype == 'rnn_relu':
-            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, nl='relu', combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, nl='relu', combiner_type = combiner_type)
         elif inftype == 'att':
             self.inf_network    = Attention_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, nheads = num_heads, post_approx = post_approx, rank = rank)
         else:
