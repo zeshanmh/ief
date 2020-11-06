@@ -3,21 +3,20 @@ import torch
 import torch.nn as nn
 import numpy as np
 import sys
-from numpy.random import choice 
 import random
-sys.path.append('/afs/csail.mit.edu/u/z/zeshanmh/research/trvae')
-sys.path.append('/afs/csail.mit.edu/u/z/zeshanmh/research/trvae/data')
-sys.path.append('/afs/csail.mit.edu/u/z/zeshanmh/research/trvae/dmm')
-sys.path.append('/afs/csail.mit.edu/u/z/zeshanmh/research/trvae/models')
-from base import setup_torch_dataset, pt_numpy
-sys.path.append('../data/ml_mmrf')
-sys.path.append('../data/')
+import optuna
+sys.path.append('../')
+sys.path.append('../ml_mmrf/')
 from ml_mmrf_v1.data import load_mmrf
-from dmm import DMM 
+sys.path.append('../../ief_core/')
+sys.path.append('../../ief_core/models/')
+from ssm.ssm_dummy import SSM, SSMAtt
+from utils import *
 from torch.utils.data import DataLoader, TensorDataset
+from numpy.random import choice 
 
-def gen_ss_helper(model, B, X, A, M, Y, CE, k='train', add_missing=False, eval_mult=30): 
-    _, _, lens = model.get_masks(M)
+def gen_ss_helper(model, B, X, A, M, Y, CE, k='train', add_missing=False, eval_mult=30, add_syn_marker=False, restrict_markers=False): 
+    _, _, lens = get_masks(M)
     B, X, A, M, Y, CE = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
     base_cat   = B[:,None,:].repeat(1, max(1, X.shape[1]-1), 1)
     T_forward  = 20
@@ -26,16 +25,18 @@ def gen_ss_helper(model, B, X, A, M, Y, CE, k='train', add_missing=False, eval_m
     else: 
         mult = eval_mult
     nsamples = mult*B.shape[0]
-    
     Bs = np.zeros((nsamples,B.shape[1]))
     Xs = np.zeros((nsamples,T_forward,X.shape[2]))
     As = np.zeros((nsamples,T_forward,A.shape[2]))
     Ms = np.zeros((nsamples,T_forward,M.shape[2]))
-    Ys = np.zeros((nsamples,Y.shape[1]))
+    if len(Y.shape) == 1: 
+        Ys = np.zeros((nsamples,))
+    else: 
+        Ys = np.zeros((nsamples,Y.shape[1]))
     CEs = np.zeros((nsamples,CE.shape[1]))
 
     for i in range(mult): 
-        _, _, _, _, sample = model.inspect_ss(T_forward, B, X, A, M, Y, CE)
+        _, _, _, _, sample = model.inspect(T_forward, -1, B, X, A, M, Y, CE)
         Bs[i*B.shape[0]:(i+1)*B.shape[0]] = pt_numpy(B)
         if add_missing: 
             # retain original MM missingness pattern 
@@ -53,7 +54,50 @@ def gen_ss_helper(model, B, X, A, M, Y, CE, k='train', add_missing=False, eval_m
         As[i*A.shape[0]:(i+1)*A.shape[0]] = pt_numpy(A[:,:T_forward,:])      
 
         Ys[i*Y.shape[0]:(i+1)*Y.shape[0]] = pt_numpy(Y)
-        CEs[i*CE.shape[0]:(i+1)*CE.shape[0]] = pt_numpy(CE)    
+        CEs[i*CE.shape[0]:(i+1)*CE.shape[0]] = pt_numpy(CE)  
+    
+    if add_syn_marker: # synthetic marker is sum of two major Igs based on myeloma type
+        b_names = model.ddata[1][k]['feature_names'].tolist()
+        x_names = model.ddata[1][k]['feature_names_x'].tolist()
+        Xnew   = np.zeros((Xs.shape[0],Xs.shape[1],Xs.shape[2]+1))
+        Mnew   = np.ones((Ms.shape[0],Ms.shape[1],Ms.shape[2]+1))
+        for i in range(Xs.shape[0]): 
+            tseq = np.zeros((Xs.shape[1],)) 
+            if Bs[i,b_names.index('igg_type')] == 1.: 
+                tseq += Xs[i,:,x_names.index('serum_igg')]
+            elif Bs[i,b_names.index('iga_type')] == 1.: 
+                tseq += Xs[i,:,x_names.index('serum_iga')]
+            elif Bs[i,b_names.index('igm_type')] == 1.: 
+                tseq += Xs[i,:,x_names.index('serum_igm')]
+                    
+            if Bs[i,b_names.index('kappa_type')] == 1.: 
+                tseq += Xs[i,:,x_names.index('serum_kappa')]
+            elif Bs[i,b_names.index('lambda_type')] == 1.: 
+                tseq += Xs[i,:,x_names.index('serum_lambda')] 
+        
+            tseq = tseq[:,np.newaxis]
+            Xnew[i] = np.concatenate((Xs[i,:,:], tseq), axis=-1)
+            mseq    = np.ones((Xs.shape[1],1))
+            Mnew[i] = np.concatenate((Ms[i,:,:], mseq), axis=-1)
+#         new_dset[fold][k]['x'] = new_x; new_dset[fold][k]['m'] = new_m
+#         new_dset[fold][k]['feature_names_x'] = np.array(x_names + ['syn_marker'])
+        print(f'adding synthetic marker in set {k}...')
+        print(f"new shape of X: {Xnew.shape}")
+        print(f"new shape of M: {Mnew.shape}")
+        Xs = Xnew; Ms = Mnew
+
+    if restrict_markers: 
+        x_names = model.ddata[1][k]['feature_names_x'].tolist()
+        f1      = Xs[...,x_names.index('serum_m_protein')][:,:,np.newaxis]
+        f2      = Xs[...,x_names.index('syn_marker')][:,:,np.newaxis]
+        m1      = Ms[...,x_names.index('serum_m_protein')][:,:,np.newaxis]
+        m2      = Ms[...,x_names.index('syn_marker')][:,:,np.newaxis]
+        Xs = np.concatenate((f1,f2),axis=-1)
+        Ms = np.concatenate((m1,m2),axis=-1)
+#         new_dset[fold][k]['feature_names_x'] = np.array([x_names[x_names.index('serum_m_protein')], x_names[x_names.index('syn_marker')]])
+        print(f'restricting longitudinal markers in fold set {k}...')
+        print(f"new shape of X: {Xs.shape}")
+        print(f"new shape of M: {Ms.shape}")
     
     return Bs, Xs, As, Ms, Ys, CEs
 
@@ -82,20 +126,22 @@ def add_missingness(x, m, per_missing=0.4):
 
     return new_x, new_m 
 
-def gen_ss_data(in_sample_dist=True, add_missing=False, eval_mult=30): 
-    dim_stochastic = 48; dim_hidden = 300 
-    dim_base  = 16; dim_data  = 16; dim_treat = 9
-    C = 0.01; ttype = 'gated'; etype = 'lin'
-    model = DMM(dim_stochastic, dim_hidden, dim_base, dim_data, dim_treat, C = C, ttype = ttype, etype=etype, 
-                            inftype = 'rnn_relu', combiner_type = 'pog', include_baseline = True, reg_type = 'l1', reg_all=True, augmented=False)
+def gen_ss_data(in_sample_dist=True, add_missing=False, eval_mult=30, add_syn_marker=False, restrict_markers=False): 
+    model_path = '../../ief_core/tests/checkpoints/mmfold1_regFalse_ssm_att1epoch=13142-val_loss=63.89.ckpt'
     if torch.cuda.is_available():
         device = torch.device('cuda')
     else:
         device  = torch.device('cpu')
+    
+    checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
+    hparams    = checkpoint['hyper_parameters']
+    del hparams['trial']
+    trial = optuna.trial.FixedTrial({'bs': hparams.bs, 'lr': hparams.lr, 'C': hparams.C, 'reg_all': hparams.reg_all, 'reg_type': hparams.reg_type, 'dim_stochastic': hparams.dim_stochastic})
+    model = SSM(trial, **hparams)
+    model.setup(1)
+    print('loading',model_path)
+    model.load_state_dict(checkpoint['state_dict'])
     model.to(device)
-    fname = '/afs/csail.mit.edu/u/z/zeshanmh/research/trvae/dmm/good_models/sota_ssm_mm.pt'
-    print ('loading',fname)
-    model.load_state_dict(torch.load(fname))
 
     semi_syn = {
         'train': {}, 
@@ -109,13 +155,13 @@ def gen_ss_data(in_sample_dist=True, add_missing=False, eval_mult=30):
         'test': {}
     }
     fold = 1
-    mmdata  = load_mmrf(fold_span = [fold], digitize_K = 20, digitize_method = 'uniform', suffix='_2mos')
-    dim_base, dim_data, dim_treat = mmdata[fold]['train']['b'].shape[-1], mmdata[fold]['train']['x'].shape[-1], mmdata[fold]['train']['a'].shape[-1]
-    train, train_loader = setup_torch_dataset(mmdata, fold, 'train', device)
-    valid, valid_loader = setup_torch_dataset(mmdata, fold, 'valid', device)
-    test, test_loader   = setup_torch_dataset(mmdata, fold, 'test', device)
+    train, train_loader   = model.load_helper('train', device=device, att_mask=False)
+    valid, valid_loader   = model.load_helper('valid', device=device, att_mask=False)
+    test, test_loader   = model.load_helper('test', device=device, att_mask=False)
+
     print('sampling from SSM model trained on MM data...')
-    Btr, Xtr, Atr, Mtr, Ytr, CEtr = gen_ss_helper(model, *train_loader.dataset.tensors, add_missing=add_missing, eval_mult=eval_mult)
+    Btr, Xtr, Atr, Mtr, Ytr, CEtr = gen_ss_helper(model, *train_loader.dataset.tensors, add_missing=add_missing, eval_mult=eval_mult, \
+                                                 add_syn_marker=add_syn_marker, restrict_markers=restrict_markers)
     semi_syn['train'] = {
         'B': Btr, 
         'X': Xtr,
@@ -127,9 +173,11 @@ def gen_ss_data(in_sample_dist=True, add_missing=False, eval_mult=30):
 
     for fold in range(5):
         if in_sample_dist:  
-            Bv, Xv, Av, Mv, Yv, CEv = gen_ss_helper(model, *train_loader.dataset.tensors, k='valid', add_missing=add_missing, eval_mult=eval_mult)
+            Bv, Xv, Av, Mv, Yv, CEv = gen_ss_helper(model, *train_loader.dataset.tensors, k='valid', add_missing=add_missing, eval_mult=eval_mult, \
+                                                   add_syn_marker=add_syn_marker, restrict_markers=restrict_markers)
         else: 
-            Bv, Xv, Av, Mv, Yv, CEv = gen_ss_helper(model, *valid_loader.dataset.tensors, k='valid', add_missing=add_missing, eval_mult=eval_mult)
+            Bv, Xv, Av, Mv, Yv, CEv = gen_ss_helper(model, *valid_loader.dataset.tensors, k='valid', add_missing=add_missing, eval_mult=eval_mult, \
+                                                   add_syn_marker=add_syn_marker, restrict_markers=restrict_markers)
         semi_syn['valid'][fold] = {
             'B': Bv,
             'X': Xv,
@@ -140,9 +188,11 @@ def gen_ss_data(in_sample_dist=True, add_missing=False, eval_mult=30):
         }
 
     if in_sample_dist: 
-        Bte, Xte, Ate, Mte, Yte, CEte = gen_ss_helper(model, *train_loader.dataset.tensors, k='test', add_missing=add_missing, eval_mult=eval_mult)
+        Bte, Xte, Ate, Mte, Yte, CEte = gen_ss_helper(model, *train_loader.dataset.tensors, k='test', add_missing=add_missing, eval_mult=eval_mult, \
+                                                     add_syn_marker=add_syn_marker, restrict_markers=restrict_markers)
     else: 
-        Bte, Xte, Ate, Mte, Yte, CEte = gen_ss_helper(model, *test_loader.dataset.tensors, k='test', add_missing=add_missing, eval_mult=eval_mult)
+        Bte, Xte, Ate, Mte, Yte, CEte = gen_ss_helper(model, *test_loader.dataset.tensors, k='test', add_missing=add_missing, eval_mult=eval_mult, \
+                                                     add_syn_marker=add_syn_marker, restrict_markers=restrict_markers)
     semi_syn['test'] = {
         'B': Bte, 
         'X': Xte,
@@ -154,7 +204,7 @@ def gen_ss_data(in_sample_dist=True, add_missing=False, eval_mult=30):
 
     return semi_syn
 
-def load_ss_data(nsamples, add_missing=False, gen_fly=False, in_sample_dist=True, eval_mult=30):
+def load_ss_data(nsamples, add_missing=False, gen_fly=False, in_sample_dist=True, eval_mult=30, add_syn_marker=False, restrict_markers=False):
     if not gen_fly: 
         if add_missing: 
             with open('/afs/csail.mit.edu/group/clinicalml/datasets/multiple_myeloma/semi_synthetic/semi_syn_orig_missing.pkl', 'rb') as f: 
@@ -164,7 +214,8 @@ def load_ss_data(nsamples, add_missing=False, gen_fly=False, in_sample_dist=True
                 dataset = pickle.load(f)
     else: 
         print('generating semi synthetic data...')
-        dataset = gen_ss_data(in_sample_dist=in_sample_dist, add_missing=add_missing, eval_mult=eval_mult)
+        dataset = gen_ss_data(in_sample_dist=in_sample_dist, add_missing=add_missing, eval_mult=eval_mult, \
+                              add_syn_marker=add_syn_marker, restrict_markers=restrict_markers)
 
     T = np.arange(dataset['train']['B'].shape[0])
     idxs = np.random.choice(T,size=nsamples)
