@@ -1,6 +1,6 @@
 # Intervention Effect Functions in Deep Generative Models
 
-This repository contains code to recreate the results from the paper, "Attentive Pharmacodynamic State Space Modeling." It also provides the user with scripts to train the models PK-PD deep generative models detailed in the paper (arxiv link forthcoming). We have used PyTorch Lightning to build out our models (see https://pytorch-lightning.readthedocs.io/en/latest/) as well as the MMRF CoMMpass dataset (https://research.themmrf.org/).
+This repository contains code to recreate the results from the paper, "Attentive Pharmacodynamic State Space Modeling." It also provides the user with scripts to train the models PK-PD deep generative models detailed in the paper (arxiv link forthcoming). We have used PyTorch Lightning to build out our models (see the [docs](https://pytorch-lightning.readthedocs.io/en/latest/)) as well as the [MMRF CoMMpass dataset](https://research.themmrf.org/) (see [repo](https://github.com/clinicalml/ml_mmrf), which you can clone and add in the ```data``` folder).
 
 To run this repo, 
 1. **Set up the environment**: Run `bash requirements.sh`. Each time you use this repository, start with `conda activate disease_prog`.
