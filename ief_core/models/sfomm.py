@@ -185,28 +185,33 @@ class SFOMM(Model):
 
         return p_x_mu, p_x_sig 
     
-    def get_loss(self, B, X, A, M, Y, CE, anneal = 1., return_reconstruction = False):
+    def get_loss(self, B, X, A, M, Y, CE, anneal = 1., return_reconstruction = False, latent_impute=False):
         _, _, lens         = get_masks(M)
         B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
         m_t, m_g_t, _      = get_masks(M[:,1:,:])
         q_Z   = self.q_Z_XA(X, A, B, M)
         Z     = torch.squeeze(q_Z.rsample((1,)))
+        if latent_impute: 
+            Z = q_Z.mean
         p_Z   = self.p_Z_BXA(B, X[:,0,:], A[:,0,:])
         p_x_mu, p_x_std = self.p_X_Z(Z, X, A, B)
         masked_nll = masked_gaussian_nll_3d(X[:,1:,:], p_x_mu, p_x_std, M[:,1:,:])
         nll        = masked_nll.sum(-1).sum(-1)
         kl         = (q_Z.log_prob(Z)-p_Z.log_prob(Z))
         neg_elbo   = nll+anneal*kl
+        
+#         full_masked_nll    = masked_nll
+#         import pdb; pdb.set_trace()
+#         full_nelbo = full_masked_nll + (m_t[:,:Tmax]*kl)[...,None]
 
         if return_reconstruction:
             return (neg_elbo, nll, kl, p_x_mu*M[:,1:,:], p_x_std*M[:,1:,:])
         else:
             return (neg_elbo, nll, kl, Z)
-
     
-    def forward(self, B, X, A, M, Y, CE, anneal = 1.):
+    def forward(self, B, X, A, M, Y, CE, anneal = 1., latent_impute=False, ret_full_loss=False):
         if self.hparams['loss_type'] == 'unsup' or self.hparams['loss_type'] == 'ord_unsup': 
-            neg_elbo, nll, kl, Z = self.get_loss(B, X, A, M, Y, CE, anneal = anneal)
+            neg_elbo, nll, kl, Z = self.get_loss(B, X, A, M, Y, CE, anneal = anneal, latent_impute = latent_impute)
             reg_loss          = torch.mean(neg_elbo)
             ret_loss          = neg_elbo
         elif self.hparams['loss_type'] == 'semisup' or self.hparams['loss_type'] == 'ord_semisup': 
@@ -239,8 +244,55 @@ class SFOMM(Model):
                 if 'weight' in name:
                     reg_loss += self.hparams.C*apply_reg(param, reg_type=self.hparams.reg_type)
         loss = torch.mean(reg_loss) 
+        if ret_full_loss: 
+            return (full_nelbo, torch.mean(ret_loss), torch.mean(nll), torch.mean(kl), torch.ones_like(kl)), loss 
+        
         return (torch.mean(ret_loss), torch.mean(nll), torch.mean(kl), torch.ones_like(kl)), loss 
 
+    
+    def imp_sampling(self, B, X, A, M, Y, CE, anneal = 1., imp_samples=100, idx = -1, mask = None):
+        _, _, lens = get_masks(M)
+        B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
+        m_t, m_g_t, _      = get_masks(M[:,1:,:])
+
+        ll_estimates   = torch.zeros((imp_samples,X.shape[0])).to(X.device)
+        ll_priors      = torch.zeros((imp_samples,X.shape[0])).to(X.device)
+        ll_posteriors  = torch.zeros((imp_samples,X.shape[0])).to(X.device)
+
+        X0  = X[:,0,:]; Xt = X[:,1:,:]; A0 = A[:,0,:]
+        p_Z = self.p_Z_BXA(B, X0, A0)
+        for sample in range(imp_samples): 
+            q_Z = self.q_Z_XA(X, A, B, M)
+            Z_s = torch.squeeze(q_Z.rsample((1,)))
+            p_x_mu, p_x_std = self.p_X_Z(Z_s, X, A, B)
+            masked_nll = masked_gaussian_nll_3d(X[:,1:,:], p_x_mu, p_x_std, M[:,1:,:])
+            
+            if idx != -1: 
+                masked_ll = -1*masked_nll[...,[idx]].sum(-1).sum(-1)
+            elif mask is not None: 
+                mask = mask[...,:Tmax]
+                masked_ll = -1*(masked_nll.sum(-1)*mask).sum(-1)
+            else: 
+                masked_ll          = -1*masked_nll.sum(-1).sum(-1)
+            
+            ll_prior = -1*masked_gaussian_nll_3d(Z_s, p_Z.mean, p_Z.stddev, torch.ones_like(Z_s))
+            ll_posterior = -1*masked_gaussian_nll_3d(Z_s, q_Z.mean, q_Z.stddev, torch.ones_like(Z_s))
+            ll_estimates[sample] = masked_ll
+            ll_priors[sample]    = ll_prior.sum(-1)
+            ll_posteriors[sample]= ll_posterior.sum(-1)
+#             if idx != -1: 
+#                 ll_priors[sample] = ll_prior[...,[idx]].sum(-1).sum(-1)
+#                 ll_posteriors[sample] = ll_posterior[...,[idx]].sum(-1).sum(-1)
+#             elif mask is not None: 
+#                 mask = mask[...,:Tmax]
+#                 ll_priors[sample] = (ll_prior.sum(-1)*mask).sum(-1)
+#                 ll_posteriors[sample] = (ll_posterior.sum(-1)*mask).sum(-1)
+#             else: 
+#                 ll_priors[sample] = ll_prior.sum(-1).sum(-1)
+#                 ll_posteriors[sample] = ll_posterior.sum(-1).sum(-1)
+
+        nll_estimate = -1*(torch.logsumexp(ll_estimates + ll_priors - ll_posteriors, dim=0) - np.log(imp_samples))
+        return nll_estimate, torch.mean(nll_estimate)
     
     def sample(self, T_forward, X, A, B, Z=None):
         with torch.no_grad():
@@ -252,23 +304,28 @@ class SFOMM(Model):
             base       = B[:,None,:]
             obs_list   = [X[:,[0],:]]
             mtype      = self.hparams.mtype
-
+            if mtype == 'attn_transition': 
+                obs_list = [X[:,0,:]]
             for t in range(1, T_forward):
                 x_prev     = obs_list[-1]
                 if mtype == 'gated' or mtype == 'attn_transition':
-                    Aval     = A[:,[t-1],:]
-                    cat      = torch.cat([x_prev, patternsT[:,[t-1],:]], -1)
+#                     Aval     = A[:,[t-1],:]
+                    Aval     = A[:,t-1,:]
+#                     cat      = torch.cat([x_prev, patternsT[:,[t-1],:]], -1)
+                    cat      = torch.cat([x_prev, patternsT[:,t-1,:]], -1)
 #                     p_x_mu   = self.model_mu(x_prev, torch.cat([Aval[...,[0]], base, Aval[...,1:]],-1))
-                    p_x_mu   = self.model_mu(cat, torch.cat([Aval[...,[0]], base, Aval[...,1:]],-1))
+                    p_x_mu   = self.model_mu(cat, torch.cat([Aval[...,[0]], base.squeeze(), Aval[...,1:]],-1))
                 elif 'treatment_exp' in mtype: 
                     cat      = torch.cat([x_prev, A[:,[t-1],:], base, patternsT[:,[t-1],:]], -1)
                     p_x_mu   = self.model_mu(cat, A[:,[t-1],:])
                 else:
                     p_x_mu     = self.model_mu(torch.cat([x_prev, A[:,[t-1],:], base, patternsT[:,[t-1],:]], -1))
                 obs_list.append(p_x_mu) 
+            if mtype == 'attn_transition': 
+                obs_list = [x[:,None,:] for x in obs_list]
         return torch.cat(obs_list, 1)
     
-    def inspect(self, T_forward, T_condition, B, X, A, M, Y, CE, restrict_lens = False):
+    def inspect(self, T_forward, T_condition, B, X, A, M, Y, CE, restrict_lens = False, nsamples=1):
         self.eval()
         # nelbo
         if restrict_lens: 
@@ -289,13 +346,33 @@ class SFOMM(Model):
         per_feat_nelbo = mse/vals
         
         # Sample forward unconditionally and conditionally 
-        inp_x      = self.sample(T_forward, X, A, B)
-        q_Z        = self.q_Z_XA(X[:,:T_condition], A[:,:T_condition], B, M[:,:T_condition])
-        Z_cond     = torch.squeeze(q_Z.rsample((1,))) 
-        inp_x_post = self.sample(T_forward+1, X[:,T_condition-1:], A[:,T_condition-1:], B, Z_cond)
-        inp_x_post = torch.cat([X[:,:T_condition], inp_x_post[:,1:]], 1) 
+#         for n in range(nsamples):
+#             _,(_,x_forward,_)          = self.forward_sample(A[:,1:T_forward+1,:], T_forward-1, B = B, X0=X[:,0,:], A0=A[:,0,:], eps = eps)
+#             x_forward_list.append(x_forward[...,None])
+#         x_forward                      = torch.cat(x_forward_list,-1).mean(-1)
+        # unconditional samples 
+        x_forward_list = []
+        for n in range(nsamples): 
+            inp_x  = self.sample(T_forward, X, A, B)
+            x_forward_list.append(inp_x[...,None])
+        inp_x_final = torch.cat(x_forward_list,-1).mean(-1)
+        
+        # conditional samples
+        x_forward_conditional_list = []
+        for n in range(nsamples): 
+            q_Z = self.q_Z_XA(X[:,:T_condition], A[:,:T_condition], B, M[:,:T_condition])
+            Z_cond = torch.squeeze(q_Z.rsample((1,)))
+            inp_x_post = self.sample(T_forward+1, X[:,T_condition-1:], A[:,T_condition-1:], B, Z_cond)
+            inp_x_post = torch.cat([X[:,:T_condition], inp_x_post[:,1:]], 1) 
+            x_forward_conditional_list.append(inp_x_post[...,None])
+        inp_x_post_final = torch.cat(x_forward_conditional_list,-1).mean(-1)
+#         inp_x      = self.sample(T_forward, X, A, B)
+#         q_Z        = self.q_Z_XA(X[:,:T_condition], A[:,:T_condition], B, M[:,:T_condition])
+#         Z_cond     = torch.squeeze(q_Z.rsample((1,))) 
+#         inp_x_post = self.sample(T_forward+1, X[:,T_condition-1:], A[:,T_condition-1:], B, Z_cond)
+#         inp_x_post = torch.cat([X[:,:T_condition], inp_x_post[:,1:]], 1) 
         empty      = torch.ones(X.shape[0], 3)
-        return nelbo, per_feat_nelbo, empty, empty, inp_x_post, inp_x, Z, torch.squeeze(p_Z.rsample((1,)))
+        return nelbo, per_feat_nelbo, empty, empty, inp_x_post_final, inp_x_final, Z, torch.squeeze(p_Z.rsample((1,)))
 
     def get_weights(self, Y): 
         # Y1 = torch.ones_like(Y); Y0 = torch.zeros_like(Y)     

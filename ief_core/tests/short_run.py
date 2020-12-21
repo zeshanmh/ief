@@ -16,7 +16,7 @@ from distutils.util import strtobool
 sys.path.append('../')
 sys.path.append('../../data/ml_mmrf')
 sys.path.append('../../data/')
-from ml_mmrf_v1.data import load_mmrf
+from ml_mmrf.ml_mmrf_v1.data import load_mmrf
 from synthetic.synthetic_data import load_synthetic_data_trt, load_synthetic_data_noisy
 from semi_synthetic.ss_data import *
 from models.ssm.ssm import SSM, SSMAtt
@@ -84,7 +84,7 @@ def train_ssm_gated_syn(ttype='attn_transition', num_samples=1000):
     trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=False, gpus=[0])
     trainer.fit(model)
 
-def train_ssm_gated_mm(fold=1, reg_all=True, C=0.01, reg_type='l2', ds=48, ttype='attn_transition'):
+def train_ssm_gated_mm(fold=1, reg_all=True, C=0.01, reg_type='l2', ds=48, ttype='attn_transition', gpu=0):
     print(f'[FOLD: {fold}, REG_ALL: {reg_all}]') 
     seed_everything(0)
 
@@ -126,8 +126,8 @@ def train_ssm_gated_mm(fold=1, reg_all=True, C=0.01, reg_type='l2', ds=48, ttype
     # initialize FOMM w/ args and train 
     trial = optuna.trial.FixedTrial({'bs': args.bs, 'lr': args.lr, 'C': args.C, 'reg_all': args.reg_all, 'reg_type': args.reg_type, 'dim_stochastic': args.dim_stochastic})
     model = SSM(trial, **dict_args)
-    checkpoint_callback = ModelCheckpoint(filepath='./checkpoints/mmfold' + str(fold) + str(ds) + '_' + ttype + '_ssm_dataaug_restrictedfeat_TR{epoch:05d}-{val_loss:.2f}')
-    trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=checkpoint_callback, gpus=[3])
+    checkpoint_callback = ModelCheckpoint(filepath='./checkpoints/mmfold' + str(fold) + str(ds) + '_' + ttype + '_ssm_aug_paper{epoch:05d}-{val_loss:.2f}')
+    trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, checkpoint_callback=checkpoint_callback, gpus=[gpu])
     trainer.fit(model)
     
 def train_sfomm_attn_mm(fold=1, reg_all=True, C=0.01, reg_type='l2', ds=16, mtype='linear'):
@@ -181,7 +181,8 @@ def train_fomm_gated():
     seed_everything(0)
     
     configs = [ 
-        (1, 10000, 'attn_transition', .1, True, 'l1')
+        (1, 10000, 'attn_transition', .1, False, 'l1'),
+        (1, 10000, 'linear', .1, True, 'l1')
     ]
     parser = ArgumentParser()
     parser.add_argument('--model_name', type=str, default='fomm_att', help='fomm, ssm, or gru')
@@ -229,19 +230,33 @@ def train_fomm_gated():
         # initialize FOMM w/ args and train
         trial = optuna.trial.FixedTrial({'bs': args.bs, 'lr': args.lr, 'C': args.C, 'reg_all': args.reg_all, 'reg_type': args.reg_type, 'dim_hidden': args.dim_hidden}) 
         model = FOMM(trial, **dict_args)
-        checkpoint_callback = ModelCheckpoint(filepath='./checkpoints/mmfold_' + str(fold) + '_bagoffunc_fomm_att1{epoch:05d}-{val_loss:.2f}')
+        checkpoint_callback = ModelCheckpoint(filepath='./checkpoints/mmfold_' + str(fold) + mtype + '_dataaug_restrictedfeat_fomm_{epoch:05d}-{val_loss:.2f}')
         trainer = Trainer.from_argparse_args(args, deterministic=True, logger=False, gpus=[2], \
                         checkpoint_callback=checkpoint_callback, early_stop_callback=False)
         trainer.fit(model)
 
 
 if __name__ == '__main__':
-#     train_sfomm_attn_mm(fold=1, reg_all=True, C=0.01, reg_type='l2', ds=16)
-    sizes = [16,48,64]
+    parser = ArgumentParser()
+
+    # figure out which model to use and other basic params
+    parser.add_argument('--model_name', type=str, default='pkpd')
+    parser.add_argument('--gpu', type=int, default=0)
+    parser = Trainer.add_argparse_args(parser)
+    args = parser.parse_args()
+    
+    sizes = [16,64,128]
 #     for ds in sizes: 
 #         train_sfomm_attn_mm(fold=1, reg_all=True, C=0.01, reg_type='l2', ds=ds, mtype='linear')
 #         train_sfomm_attn_mm(fold=1, reg_all=True, C=0.01, reg_type='l2', ds=ds, mtype='attn_transition')
-    # no aug, restricted feature set 
+    # no aug, full feature set 
     for ds in sizes: 
-        train_ssm_gated_mm(fold=1, reg_all=True, C=0.01, reg_type='l1', ds=ds, ttype='attn_transition')
-        train_ssm_gated_mm(fold=1, reg_all=True, C=0.01, reg_type='l2', ds=ds, ttype='lin')
+        if args.model_name == 'pkpd':
+            train_ssm_gated_mm(fold=1, reg_all=True, C=0.01, reg_type='l1', ds=ds, ttype='attn_transition', gpu=args.gpu)
+        elif args.model_name == 'lin': 
+            train_ssm_gated_mm(fold=1, reg_all=True, C=0.01, reg_type='l2', ds=16, ttype='lin', gpu=args.gpu)
+        elif args.model_name == 'nl': 
+            train_ssm_gated_mm(fold=1, reg_all=True, C=0.1, reg_type='l2', ds=48, ttype='nl', gpu=args.gpu)
+        elif args.model_name == 'moe': 
+            train_ssm_gated_mm(fold=1, reg_all=True, C=0.1, reg_type='l2', ds=48, ttype='moe', gpu=args.gpu)
+

@@ -82,8 +82,8 @@ class AttentionIEFTransition(nn.Module):
         key   = torch.cat((out_linear[...,None], out_te[...,None], out_logcell[...,None]), dim=-1).transpose(-2,-1)
         query = inp[...,None,:]
         out   = self.attn.forward(query, key, value, use_matmul=False).squeeze()
-        if len(out.shape) == 2: 
-            out = out[:,None,:]
+#         if len(out.shape) == 2: 
+#             out = out[:,None,:]
         if self.response_only:
             return out
         else: 

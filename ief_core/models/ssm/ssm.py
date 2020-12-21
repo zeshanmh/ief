@@ -129,6 +129,8 @@ class SSM(Model):
         masked_nll         = masked_gaussian_nll_3d(X[:,1:Tmax+1,:], p_x_mu, p_x_std, M[:,1:Tmax+1,:])
         full_masked_nll    = masked_nll
         masked_nll         = masked_nll.sum(-1).sum(-1)
+#         full_masked_kl_t = m_t[:,:Tmax]*kl_t
+#         full_nelbo = full_masked_nll + (m_t[:,:Tmax]*kl_t)[...,None]
     
         if with_pred:
             p_x_mu_pred, p_x_std_pred = self.p_X_Z(p_zt.mean, A[:,:Z_t.shape[1],[0]])
@@ -211,7 +213,7 @@ class SSM(Model):
         nll_estimate = -1*(torch.logsumexp(ll_estimates + ll_priors - ll_posteriors, dim=0) - np.log(imp_samples))
         return nll_estimate, torch.mean(nll_estimate)
     
-    def forward(self, B, X, A, M, Y, CE, anneal = 1.):
+    def forward(self, B, X, A, M, Y, CE, anneal = 1., full_ret_loss=False):
         if self.hparams.clock_ablation: 
             A[...,0] = torch.ones(A.shape[1])
         if self.training:
@@ -232,6 +234,9 @@ class SSM(Model):
                 if 'attn' not in name:
                     reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
         loss = torch.mean(reg_loss)
+#         if full_ret_loss: 
+#             return (full_nelbo, torch.mean(neg_elbo), torch.mean(masked_nll), torch.mean(kl), torch.ones_like(kl)), loss
+        
         return (torch.mean(neg_elbo), torch.mean(masked_nll), torch.mean(kl), torch.ones_like(kl)), loss
     
     def forward_sample(self, A, T_forward, Z_start = None, B=None, X0=None, A0=None, eps = 0.):
@@ -261,9 +266,8 @@ class SSM(Model):
     def inspect(self, T_forward, T_condition, B, X, A, M, Y, CE, restrict_lens = False, nsamples = 1, eps = 0.):
         self.eval()
         m_t, _, lens           = get_masks(M)
-        if restrict_lens:
-            B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
-            m_t, m_g_t, lens   = get_masks(M[:,1:,:])
+        B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
+        m_t, m_g_t, lens   = get_masks(M[:,1:,:])
         Z_t, q_zt            = self.inf_network(X, A, M, B)
         p_x_mu, p_x_std      = self.p_X_Z(Z_t, A[:,:Z_t.shape[1],[0]])
         p_zt                 = self.p_Zt_Ztm1(Z_t, A, B, X, A[:,0,:], eps = eps)
@@ -279,8 +283,7 @@ class SSM(Model):
         per_feat_nelbo = mse/vals
         
         neg_elbo       = torch.mean(masked_nll.sum(-1).sum(-1)+masked_kl_t)
-        
-        if T_condition != -1: 
+        if restrict_lens: 
             _, _, lens         = get_masks(M)
             idx_select         = lens>(T_forward+T_condition)
             B, X, A, M, Y, CE  = B[idx_select], X[idx_select], A[idx_select], M[idx_select], Y[idx_select], CE[idx_select]

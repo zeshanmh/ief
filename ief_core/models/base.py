@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from torchcontrib.optim import SWA
 sys.path.append('../data/ml_mmrf')
 sys.path.append('../data/')
-from ml_mmrf_v1.data import load_mmrf
+from ml_mmrf.ml_mmrf_v1.data import load_mmrf
 from synthetic.synthetic_data import load_synthetic_data_trt, load_synthetic_data_noisy
 from semi_synthetic.ss_data import *
 from models.utils import *
@@ -153,15 +153,22 @@ class Model(pl.LightningModule):
         '''
         fold = self.hparams['fold']
         if self.hparams['dataset'] == 'mm': 
+#             ddata = load_mmrf(fold_span = [fold], \
+#                               digitize_K = 0, \
+#                               digitize_method = 'uniform', \
+#                               suffix='_2mos_tr', \
+#                               restrict_markers=['serum_m_protein', 'syn_marker'], \
+#                               add_syn_marker=True, \
+#                               window='first_second', \
+#                               data_aug=True)
             ddata = load_mmrf(fold_span = [fold], \
-                              digitize_K = 0, \
+                              digitize_K = 20, \
                               digitize_method = 'uniform', \
-                              suffix='_2mos_tr', \
-                              restrict_markers=True, \
-                              add_syn_marker=True, \
+                              suffix='_2mos', \
+                              restrict_markers=[], \
+                              add_syn_marker=False, \
                               window='all', \
                               data_aug=True)
-#             ddata = load_mmrf(fold_span = [fold], digitize_K = 20, digitize_method = 'uniform', suffix='_2mos')
 
         elif self.hparams['dataset'] == 'synthetic': 
             nsamples        = {'train':self.hparams['nsamples_syn'], 'valid':1000, 'test':200}
@@ -202,7 +209,7 @@ class Model(pl.LightningModule):
         
     def load_helper(self, tvt, device=None, oversample=True, att_mask=False):
         fold = self.hparams['fold']; batch_size = self.bs
-
+    
         if device is not None: 
             B  = torch.from_numpy(self.ddata[fold][tvt]['b'].astype('float32')).to(device)
             X  = torch.from_numpy(self.ddata[fold][tvt]['x'].astype('float32')).to(device)
@@ -213,7 +220,6 @@ class Model(pl.LightningModule):
             X  = torch.from_numpy(self.ddata[fold][tvt]['x'].astype('float32'))
             A  = torch.from_numpy(self.ddata[fold][tvt]['a'].astype('float32'))
             M  = torch.from_numpy(self.ddata[fold][tvt]['m'].astype('float32'))
-
         y_vals   = self.ddata[fold][tvt]['ys_seq'][:,0].astype('float32')
         idx_sort = np.argsort(y_vals)
 
