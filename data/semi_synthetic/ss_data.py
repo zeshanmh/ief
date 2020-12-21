@@ -7,7 +7,7 @@ import random
 import optuna
 sys.path.append('../')
 sys.path.append('../ml_mmrf/')
-from ml_mmrf_v1.data import load_mmrf
+from ml_mmrf.ml_mmrf_v1.data import load_mmrf
 sys.path.append('../../ief_core/')
 sys.path.append('../../ief_core/models/')
 from ssm.ssm_dummy import SSM, SSMAtt
