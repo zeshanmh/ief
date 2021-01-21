@@ -146,9 +146,12 @@ class GRU(Model):
     
     def inspect(self, T_forward, T_condition, B, X, A, M, Y, CE, restrict_lens = False):
         self.eval()
-        if restrict_lens: 
-            m_t, m_g_t, lens   = get_masks(M[:,1:,:])
-            B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
+#         if restrict_lens: 
+#             m_t, m_g_t, lens   = get_masks(M[:,1:,:])
+#             B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
+        m_t, _, lens           = get_masks(M)
+        idx_select = lens>1
+        B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
         _, _, lens_0TM1 = get_masks(M[:,:-1,:])
         p_x_mu, p_x_std = self.p_X(X, A, B, lens_0TM1)
         Tmax       = p_x_mu.shape[1]
@@ -168,7 +171,7 @@ class GRU(Model):
         inp_x = self.sample(T_forward, X, A, B, hidden = None)
         inp_x = torch.cat([X[:,[0]], inp_x[:,1:]], 1)
         empty = torch.ones(X.shape[0], 3)
-        return nll, per_feat_nll, empty, empty, inp_x_post, inp_x
+        return nll, per_feat_nll, empty, empty, inp_x_post, inp_x, (B, X, A, M, Y, CE), idx_select
     
     def predict(self,**kwargs):
         raise NotImplemented()

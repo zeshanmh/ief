@@ -164,11 +164,13 @@ class Model(pl.LightningModule):
             ddata = load_mmrf(fold_span = [fold], \
                               digitize_K = 20, \
                               digitize_method = 'uniform', \
-                              suffix='_2mos', \
+                              suffix='_2mos_ia15', \
                               restrict_markers=[], \
                               add_syn_marker=False, \
                               window='all', \
-                              data_aug=True)
+                              data_aug=False, \
+                              ablation=True, \
+                              feats=[self.hparams['include_baseline'], self.hparams['include_treatment']])
 
         elif self.hparams['dataset'] == 'synthetic': 
             nsamples        = {'train':self.hparams['nsamples_syn'], 'valid':1000, 'test':200}

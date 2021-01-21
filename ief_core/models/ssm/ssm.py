@@ -3,6 +3,7 @@ import sys, math
 import numpy as np
 import torch.jit as jit
 import warnings 
+import copy
 import torch.nn.init as init
 import torch.nn as nn
 
@@ -67,12 +68,12 @@ class SSM(Model):
             raise ValueError('bad etype')
 
         # Transition Function
-        if self.hparams['include_baseline']:
+        if self.hparams['include_baseline'] != 'none':
             self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat+dim_base, dim_hidden, ttype, \
-                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)                
-        else:
+                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)      
+        else: 
             self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat, dim_hidden, ttype, \
-                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)
+                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)      
         
         # Prior over Z1
         self.prior_W        = nn.Linear(dim_treat+dim_data+dim_base, dim_stochastic)
@@ -103,13 +104,14 @@ class SSM(Model):
         inp_cat  = torch.cat([B, X0, A0], -1)
         mu1      = self.prior_W(inp_cat)[:,None,:]
         sig1     = torch.nn.functional.softplus(self.prior_sigma(inp_cat))[:,None,:]
+#         mu1      = torch.zeros_like(sig1).to(sig1.device)
         
         Tmax     = Zt.shape[1]
         if self.hparams['augmented']: 
             Zinp = torch.cat([Zt[:,:-1,:], Xt[:,:-1,:]], -1)
         else: 
             Zinp = Zt[:,:-1,:]
-        if self.hparams['include_baseline']:
+        if self.hparams['include_baseline'] != 'none':
             Aval = A[:,1:Tmax,:]
             Acat = torch.cat([Aval[...,[0]],B[:,None,:].repeat(1,Aval.shape[1],1), Aval[...,1:]],-1)
             mu2T, sig2T = self.transition_fxn(Zinp, Acat, eps = eps)
@@ -123,6 +125,8 @@ class SSM(Model):
         B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
         m_t, m_g_t, _      = get_masks(M[:,1:,:])
         Z_t, q_zt          = self.inf_network(X, A, M, B)
+#         idxs = np.random.choice(Z_t.shape[-1],size=6,replace=False)
+#         Z_t[...,idxs] = 1.
         Tmax               = Z_t.shape[1]
         p_x_mu, p_x_std    = self.p_X_Z(Z_t, A[:,1:Tmax+1,[0]])
         p_zt               = self.p_Zt_Ztm1(Z_t, A, B, X, A[:,0,:])
@@ -248,7 +252,7 @@ class SSM(Model):
         Zlist = [Z_start]
         for t in range(1, T_forward):
             Ztm1       = Zlist[t-1]
-            if self.hparams.include_baseline:
+            if self.hparams.include_baseline != 'none':
                 Aval = A[:,t-1,:]
                 Acat = torch.cat([Aval[...,[0]], B, Aval[...,1:]], -1)
                 mut, sigmat= self.transition_fxn(Ztm1, Acat, eps = eps)
@@ -266,6 +270,7 @@ class SSM(Model):
     def inspect(self, T_forward, T_condition, B, X, A, M, Y, CE, restrict_lens = False, nsamples = 1, eps = 0.):
         self.eval()
         m_t, _, lens           = get_masks(M)
+        idx_select = lens>1
         B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
         m_t, m_g_t, lens   = get_masks(M[:,1:,:])
         Z_t, q_zt            = self.inf_network(X, A, M, B)
@@ -305,17 +310,25 @@ class SSM(Model):
             x_forward_conditional = torch.cat(x_forward_conditional_list, -1).mean(-1)
             x_sample_conditional  = torch.cat([X[:,:T_condition,:], x_forward_conditional],1)
         
-            return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_sample_conditional, x_forward
+            return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_sample_conditional, x_forward, (B,X,A,M,Y,CE), idx_select
 
-        return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_forward
+        return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_forward, (B,X,A,M,Y,CE), idx_select
 
     def inspect_trt(self, B, X, A, M, Y, CE, nsamples=3): 
+        self.eval()
+        m_t, _, lens           = get_masks(M)
+        idx_select = lens>1
+        B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
+        
         x_conditional_list = []
         for n in range(nsamples): 
             x_conditionals_per_pt = []
             for i in range(X.shape[0]): 
                 # np.unique(np.where(pt_numpy(A)[...,-2:] == 1.)[0])
                 T_condition = np.max(np.where(pt_numpy(A[i,:,-3]) == 1.)[0])+1
+                print(i)
+                if i == 38: 
+                    import pdb; pdb.set_trace()
                 l           = np.where(pt_numpy(A[i,:,-1]) == 1.)[0]
                 if len(l) == 0: 
                     T_total = np.max(np.where(pt_numpy(A[i,:-2] == 1.))[0])+1
@@ -329,7 +342,7 @@ class SSM(Model):
             x_conditional_list.append(torch.cat(x_conditionals_per_pt,0)[...,None])
         x_final_conditional  = torch.cat(x_conditional_list, -1).mean(-1)
 
-        return x_final_conditional
+        return x_final_conditional, (B,X,A,M,Y,CE), idx_select
     
     def predict(self, **kwargs):
         raise NotImplemented()
@@ -343,7 +356,8 @@ class SSM(Model):
         parser.add_argument('--ttype', type=str, default='lin', help='SSM transition function')
         parser.add_argument('--inftype', type=str, default='rnn_relu', help='inference network type')
         parser.add_argument('--post_approx', type=str, default='diag', help='inference of approximate posterior distribution')
-        parser.add_argument('--include_baseline', type=strtobool, default=True, help='whether or not to condition on baseline data in gen model')            
+        parser.add_argument('--include_baseline', type=str, default='all', help='whether or not to condition on baseline data in gen model')            
+        parser.add_argument('--include_treatment', type=str, default='lines', help='whether or not to condition on baseline data in gen model')            
         parser.add_argument('--elbo_samples', type=int, default=1, help='number of samples to run through inference network')        
         parser.add_argument('--augmented', type=strtobool, default=False, help='SSM augmented')        
         parser.add_argument('--C', type=float, default=.01, help='regularization strength')
@@ -404,12 +418,14 @@ class SSMAtt(SSM):
             raise ValueError('bad etype')
 
         # Transition Function
-        if self.hparams['include_baseline']:
+        if self.hparams['include_baseline'] == 'all':
             self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat+dim_base, dim_hidden, ttype, \
                 augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)                
-        else:
+        elif self.hparams['include_baseline'] == 'none': 
             self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat, dim_hidden, ttype, \
                 augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)
+        else: 
+            pass
         
         # Prior over Z1
         self.prior_W        = nn.Linear(dim_treat+dim_data+dim_base, dim_stochastic)
@@ -542,13 +558,13 @@ class TransitionFunction(nn.Module):
             self.t_sigma        = nn.ModuleList(t_sigma)
         elif self.ttype == 'gated':
             avoid_init = False
-            if self.dim_data != 16:
+            if self.dim_data != 16 or self.dim_treat != 9:
                 avoid_init = True
             self.t_mu               = GatedTransition(dim_input, dim_treat, avoid_init = avoid_init, dim_output=dim_stochastic, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic)
             self.t_sigma            = nn.Linear(dim_input+dim_treat, dim_stochastic)
         elif self.ttype == 'attn_transition': 
             avoid_init = False
-            if self.dim_data != 16:
+            if self.dim_data != 16 or self.dim_treat != 9:
                 avoid_init = True
             self.t_mu               = AttentionIEFTransition(dim_input, dim_treat, avoid_init = avoid_init, dim_output=dim_stochastic, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic, num_heads=num_heads)
             self.t_sigma            = nn.Linear(dim_input+dim_treat, dim_stochastic)
