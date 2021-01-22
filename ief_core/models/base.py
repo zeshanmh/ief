@@ -12,7 +12,8 @@ from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from torchcontrib.optim import SWA
 sys.path.append('../data/ml_mmrf')
 sys.path.append('../data/')
-from ml_mmrf.ml_mmrf_v1.data import load_mmrf
+# from ml_mmrf.ml_mmrf_v1.data import load_mmrf
+from ml_mmrf.data import load_mmrf
 from synthetic.synthetic_data import load_synthetic_data_trt, load_synthetic_data_noisy
 from semi_synthetic.ss_data import *
 from models.utils import *
@@ -29,7 +30,7 @@ class Model(pl.LightningModule):
         self.trial = trial
         self.bs = trial.suggest_categorical('bs', [600,1500])
         self.lr = 1e-3
-        self.C  = trial.suggest_categorical('C', [.01,.1,1])
+        self.C  = trial.suggest_categorical('C', [.001,.01,.1,1,10])
         self.reg_all  = trial.suggest_categorical('reg_all', [True, False])
         self.reg_type = trial.suggest_categorical('reg_type', ['l1', 'l2'])
     
@@ -161,10 +162,11 @@ class Model(pl.LightningModule):
 #                               add_syn_marker=True, \
 #                               window='first_second', \
 #                               data_aug=True)
+            
             ddata = load_mmrf(fold_span = [fold], \
+                              data_dir  = self.hparams['data_dir'], \
                               digitize_K = 20, \
                               digitize_method = 'uniform', \
-                              suffix='_2mos_ia15', \
                               restrict_markers=[], \
                               add_syn_marker=False, \
                               window='all', \

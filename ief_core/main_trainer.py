@@ -1,5 +1,6 @@
 import pytorch_lightning as pl
 import sys
+sys.path.append('./models')
 import os
 import optuna 
 from optuna.integration import PyTorchLightningPruningCallback
@@ -15,6 +16,7 @@ from models.ssm.ssm_baseline import SSMBaseline
 from models.rnn import GRU 
 from models.sfomm import SFOMM
 from distutils.util import strtobool
+
 
 '''
 Name: main_trainer.py 
@@ -60,7 +62,8 @@ def objective(trial, args):
         gpus=[args.gpu_id], 
         checkpoint_callback=False, 
         callbacks=[metrics_callback], 
-        early_stop_callback=PyTorchLightningPruningCallback(trial, monitor='val_loss')
+#         early_stop_callback=PyTorchLightningPruningCallback(trial, monitor='val_loss')
+        early_stop_callback=False
     )
     trainer.fit(model)
     return min([x['val_loss'].item() for x in metrics_callback.metrics])
@@ -87,8 +90,13 @@ if __name__ == '__main__':
     parser.add_argument('--bs', default=600, type=int, help='batch size')
     parser.add_argument('--fold', default=1, type=int)
     parser.add_argument('--seed', default=0, type=int)
-    parser.add_argument('--optuna', type=strtobool, default=True, help='whether to use optuna for optimization')
+    parser.add_argument('--optuna', type=strtobool, default=False, help='whether to use optuna for optimization')
     parser.add_argument('--num_optuna_trials', default=100, type=int)
+    parser.add_argument('--include_baseline', type=str, default='all')
+    parser.add_argument('--include_treatment', type=str, default='lines')
+    parser.add_argument('--cluster_run', type=strtobool, default=True)
+    parser.add_argument('--data_dir', type=str, \
+            default='/afs/csail.mit.edu/u/z/zeshanmh/research/ief/data/ml_mmrf/ml_mmrf/output/cleaned_mm_fold_2mos.pkl')
 
     # THIS LINE IS KEY TO PULL THE MODEL NAME
     temp_args, _ = parser.parse_known_args()
@@ -138,3 +146,7 @@ if __name__ == '__main__':
             fi.write(f'\t\tValue: {trial.value}\n')
             for k,v in trial.params.items(): 
                 fi.write(f'\t\t{k}: {v}\n')
+    else: 
+        trial = optuna.trial.FixedTrial({'bs': args.bs, 'lr': args.lr, 'C': args.C, 'reg_all': args.reg_all, 'reg_type': args.reg_type, 'dim_stochastic': args.dim_stochastic})    
+        best_nelbo = objective(trial, args)
+        print(f'BEST_NELBO: {best_nelbo}')

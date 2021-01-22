@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from torchcontrib.optim import SWA
 sys.path.append('../data/ml_mmrf')
 sys.path.append('../data/')
-from ml_mmrf.ml_mmrf_v1.data import load_mmrf
+from ml_mmrf.data import load_mmrf
 from synthetic.synthetic_data import load_synthetic_data_trt, load_synthetic_data_noisy
 from models.utils import *
 

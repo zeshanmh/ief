@@ -33,7 +33,7 @@ class SSM(Model):
         dim_hidden  = self.hparams['dim_hidden']
         num_heads   = self.hparams['nheads']
         # dim_stochastic = self.hparams['dim_stochastic']
-        dim_stochastic = self.trial.suggest_int('dim_stochastic',16,256)
+        dim_stochastic = self.trial.suggest_int('dim_stochastic',8,256)
         dim_data    = self.hparams['dim_data']
         dim_base    = self.hparams['dim_base']
         dim_treat   = self.hparams['dim_treat']
@@ -356,8 +356,6 @@ class SSM(Model):
         parser.add_argument('--ttype', type=str, default='lin', help='SSM transition function')
         parser.add_argument('--inftype', type=str, default='rnn_relu', help='inference network type')
         parser.add_argument('--post_approx', type=str, default='diag', help='inference of approximate posterior distribution')
-        parser.add_argument('--include_baseline', type=str, default='all', help='whether or not to condition on baseline data in gen model')            
-        parser.add_argument('--include_treatment', type=str, default='lines', help='whether or not to condition on baseline data in gen model')            
         parser.add_argument('--elbo_samples', type=int, default=1, help='number of samples to run through inference network')        
         parser.add_argument('--augmented', type=strtobool, default=False, help='SSM augmented')        
         parser.add_argument('--C', type=float, default=.01, help='regularization strength')
