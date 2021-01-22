@@ -7,7 +7,7 @@ import sys
 from lifelines.utils import concordance_index
 from sklearn.metrics import r2_score
 from pytorch_lightning.metrics.functional import f1_score, precision_recall, auroc
-from pytorch_lightning.metrics.sklearns import F1, Precision, Recall
+#from pytorch_lightning.metrics.sklearns import F1, Precision, Recall
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from torchcontrib.optim import SWA
 sys.path.append('../data/ml_mmrf')
@@ -227,13 +227,11 @@ class Model(pl.LightningModule):
         data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
         return data, data_loader
 
-    @pl.data_loader
     def train_dataloader(self):
         if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
             _, train_loader = self.load_helper(tvt='train', att_mask=self.hparams['att_mask'])
         return train_loader
 
-    @pl.data_loader
     def val_dataloader(self):
         if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
             _, valid_loader = self.load_helper(tvt='valid', att_mask=self.hparams['att_mask'])
