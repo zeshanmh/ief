@@ -63,7 +63,8 @@ def objective(trial, args):
         checkpoint_callback=False, 
         callbacks=[metrics_callback], 
 #         early_stop_callback=PyTorchLightningPruningCallback(trial, monitor='val_loss')
-        early_stop_callback=False
+        early_stop_callback=False,
+        progress_bar_refresh_rate=0
     )
     trainer.fit(model)
     return min([x['val_loss'].item() for x in metrics_callback.metrics])

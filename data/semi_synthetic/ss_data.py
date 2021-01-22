@@ -4,12 +4,13 @@ import torch.nn as nn
 import numpy as np
 import sys
 import random
-import optuna
-sys.path.append('../')
-sys.path.append('../ml_mmrf/')
+import optuna, os
+fpath= os.path.dirname(os.path.realpath(__file__))
+sys.path.append(os.path.join(fpath,'../'))
+sys.path.append(os.path.join(fpath,'../ml_mmrf'))
+sys.path.append(os.path.join(fpath,'../../ief_core/'))
+sys.path.append(os.path.join(fpath,'../../ief_core/models/'))
 from ml_mmrf.data import load_mmrf
-sys.path.append('../../ief_core/')
-sys.path.append('../../ief_core/models/')
 from ssm.ssm_dummy import SSM, SSMAtt
 from utils import *
 from torch.utils.data import DataLoader, TensorDataset

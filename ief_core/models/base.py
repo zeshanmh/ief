@@ -1,4 +1,4 @@
-import torch
+import torch, os
 import torch.nn as nn
 import numpy as np
 import logging
@@ -10,9 +10,11 @@ from pytorch_lightning.metrics.functional import f1_score, precision_recall, aur
 #from pytorch_lightning.metrics.sklearns import F1, Precision, Recall
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from torchcontrib.optim import SWA
-sys.path.append('../data/ml_mmrf')
-sys.path.append('../data/')
+fpath= os.path.dirname(os.path.realpath(__file__))
+sys.path.append(os.path.join(fpath,'../../data/ml_mmrf'))
+sys.path.append(os.path.join(fpath,'../../data/'))
 # from ml_mmrf.ml_mmrf_v1.data import load_mmrf
+print (sys.path)
 from ml_mmrf.data import load_mmrf
 from synthetic.synthetic_data import load_synthetic_data_trt, load_synthetic_data_noisy
 from semi_synthetic.ss_data import *
@@ -167,7 +169,7 @@ class Model(pl.LightningModule):
             if self.hparams['data_dir']=='cluster':
                 data_dir = os.path.join(os.environ['PT_DATA_DIR'],'ml_mmrf','ml_mmrf','output','cleaned_mm_fold_2mos.pkl')
             ddata = load_mmrf(fold_span = [fold], \
-                              data_dir  = self.hparams['data_dir'], \
+                              data_dir  = data_dir, \
                               digitize_K = 20, \
                               digitize_method = 'uniform', \
                               restrict_markers=[], \

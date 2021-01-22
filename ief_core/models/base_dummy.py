@@ -1,4 +1,4 @@
-import torch
+import torch, os
 import torch.nn as nn
 import numpy as np
 import logging
@@ -10,8 +10,9 @@ from pytorch_lightning.metrics.functional import f1_score, precision_recall, aur
 #from pytorch_lightning.metrics.sklearns import F1, Precision, Recall
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from torchcontrib.optim import SWA
-sys.path.append('../data/ml_mmrf')
-sys.path.append('../data/')
+fpath= os.path.dirname(os.path.realpath(__file__))
+sys.path.append(os.path.join(fpath,'../data/ml_mmrf'))
+sys.path.append(os.path.join(fpath,'../data/'))
 from ml_mmrf.data import load_mmrf
 from synthetic.synthetic_data import load_synthetic_data_trt, load_synthetic_data_noisy
 from models.utils import *
