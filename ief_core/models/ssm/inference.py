@@ -110,7 +110,7 @@ class RNN_STInf(nn.Module):
         rnn_mask        = (m[:,1:].sum(-1)>1)*1.
         inp             = torch.cat([x[:,1:,:], rnn_mask[...,None], a[:,1:,:], b[:,None,:].repeat(1,a.shape[1]-1,1)], -1)
         m_t, _, lens    = get_masks(m[:,1:,:])
-        pdseq      = torch.nn.utils.rnn.pack_padded_sequence(inp, lens, batch_first=True, enforce_sorted = False)
+        pdseq      = torch.nn.utils.rnn.pack_padded_sequence(inp, lens.cpu(), batch_first=True, enforce_sorted = False)
         out_pd, _  = self.inf_rnn(pdseq)
         out, _     = torch.nn.utils.rnn.pad_packed_sequence(out_pd, batch_first=True)
         hid_rnn_zt = self.hid_rnn_zt(out)
