@@ -13,7 +13,6 @@ from torchcontrib.optim import SWA
 fpath= os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(fpath,'../../data/ml_mmrf'))
 sys.path.append(os.path.join(fpath,'../../data/'))
-# from ml_mmrf.ml_mmrf_v1.data import load_mmrf
 print (sys.path)
 from ml_mmrf.data import load_mmrf
 from synthetic.synthetic_data import load_synthetic_data_trt, load_synthetic_data_noisy
@@ -166,7 +165,7 @@ class Model(pl.LightningModule):
 #                               data_aug=True)
             
             data_dir = self.hparams['data_dir']
-            if self.hparams['data_dir']=='cluster':
+            if self.hparams['data_dir'] == 'cluster':
                 data_dir = os.path.join(os.environ['PT_DATA_DIR'],'ml_mmrf','ml_mmrf','output','cleaned_mm_fold_2mos.pkl')
             ddata = load_mmrf(fold_span = [fold], \
                               data_dir  = data_dir, \

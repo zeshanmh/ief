@@ -31,8 +31,7 @@ class SSM(Model):
         ttype       = self.hparams['ttype']; etype = self.hparams['etype']
         dim_hidden  = self.hparams['dim_hidden']
         num_heads   = self.hparams['nheads']
-        # dim_stochastic = self.hparams['dim_stochastic']
-        dim_stochastic = self.trial.suggest_int('dim_stochastic',16,256)
+        dim_stochastic = self.hparams['dim_stochastic']
         dim_data    = self.hparams['dim_data']
         dim_base    = self.hparams['dim_base']
         dim_treat   = self.hparams['dim_treat']
