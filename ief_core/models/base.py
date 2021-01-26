@@ -167,6 +167,10 @@ class Model(pl.LightningModule):
             data_dir = self.hparams['data_dir']
             if self.hparams['data_dir'] == 'cluster':
                 data_dir = os.path.join(os.environ['PT_DATA_DIR'],'ml_mmrf','ml_mmrf','output','cleaned_mm_fold_2mos.pkl')
+            elif self.hparams['data_dir'] == 'cluster_comb3':
+                data_dir = os.path.join(os.environ['PT_DATA_DIR'],'ml_mmrf','ml_mmrf','output','cleaned_mm3_2mos_comb3.pkl')
+            elif self.hparams['data_dir'] == 'cluster_comb4':
+                data_dir = os.path.join(os.environ['PT_DATA_DIR'],'ml_mmrf','ml_mmrf','output','cleaned_mm3_2mos_comb4.pkl')
             ddata = load_mmrf(fold_span = [fold], \
                               data_dir  = data_dir, \
                               digitize_K = 20, \
