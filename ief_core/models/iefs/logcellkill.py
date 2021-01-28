@@ -58,7 +58,8 @@ class LogCellKill(nn.Module):
             out          = inp*(1-growth_term-te*torch.exp(-tvals*scale))
         elif self.mtype=='logcellkill_1':
             growth_term  = torch.sigmoid(self.rho)*torch.nn.functional.softplus(inp)
-            out          = inp*(1-growth_term*0.-te*torch.exp(-tvals*scale))
+#             out          = inp*(1-growth_term*0.-te*torch.exp(-tvals*scale))
+            out          = (1-growth_term*0.-te*torch.exp(-tvals*scale))
         else:
             growth_term  = torch.sigmoid(self.rho)*torch.nn.functional.softplus(inp)
             out          = inp*(1-growth_term-te*torch.exp(-tvals*scale)) 
