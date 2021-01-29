@@ -33,7 +33,8 @@ class AttentionIEFTransition(nn.Module):
                        otype = 'linear', 
                        alpha1_type = 'linear', 
                        add_stochastic = False, 
-                       num_heads = 1):
+                       num_heads = 1, 
+                       zmatrix=None):
         super(AttentionIEFTransition, self).__init__()
         self.response_only    = response_only
         if dim_input == -1: 
@@ -44,12 +45,19 @@ class AttentionIEFTransition(nn.Module):
         self.dim_subtype      = dim_subtype
         self.dim_input        = dim_input
         self.dim_treat        = dim_treat
+        self.zmatrix          = zmatrix
         if not self.response_only:
-            # three dimensions to 0 
-            I = torch.zeros(dim_stochastic,dim_stochastic)
-            I[0,0] = 1.; I[1,1] = 1.; I[2,2] = 1.
-#             self.linear_layer = nn.Parameter(torch.eye(dim_stochastic)*0.)#nn.Linear(dim_stochastic, dim_stochastic) # take this out
-            self.linear_layer = nn.Parameter(I)#nn.Linear(dim_stochastic, dim_stochastic) # take this out
+            if self.zmatrix == 'identity': 
+                self.linear_layer = nn.Parameter(torch.eye(dim_stochastic))#nn.Linear(dim_stochastic, dim_stochastic)
+            elif self.zmatrix == 'zeros':
+                self.linear_layer = nn.Parameter(torch.eye(dim_stochastic)*0.)#nn.Linear(dim_stochastic, dim_stochastic)
+            elif self.zmatrix == 'partial': 
+                # three dimensions to 0 
+                I = torch.zeros(dim_stochastic,dim_stochastic)
+                I[0,0] = 1.; I[1,1] = 1.; I[2,2] = 1.
+                self.linear_layer = nn.Parameter(I)
+            else: 
+                raise ValueError('misspecified z-matrix')
             
             if otype == 'linear': 
                 self.out_layer    = nn.Linear(dim_stochastic, dim_output) 
