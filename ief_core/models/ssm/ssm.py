@@ -45,6 +45,7 @@ class SSM(Model):
         zmatrix     = self.hparams['zmatrix']
 
         # Inference Network
+        self.inf_noise = np.abs(self.hparams['inf_noise'])
         if inftype == 'rnn':
             self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, combiner_type = combiner_type)
         elif inftype == 'rnn_bn':
@@ -125,7 +126,8 @@ class SSM(Model):
         _, _, lens         = get_masks(M)
         B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
         m_t, m_g_t, _      = get_masks(M[:,1:,:])
-        Z_t, q_zt          = self.inf_network(X, A, M, B)
+        Xnew = X + torch.randn(X.shape).to(X.device)*self.inf_noise
+        Z_t, q_zt          = self.inf_network(Xnew, A, M, B)
         Tmax               = Z_t.shape[1]
         p_x_mu, p_x_std    = self.p_X_Z(Z_t, A[:,1:Tmax+1,[0]])
         p_zt               = self.p_Zt_Ztm1(Z_t, A, B, X, A[:,0,:])
@@ -230,11 +232,16 @@ class SSM(Model):
         reg_loss   = torch.mean(neg_elbo)
         
         for name,param in self.named_parameters():
-            if self.reg_all:
+            if self.reg_all == 'all':
                 # reg_loss += self.hparams['C']*apply_reg(param, reg_type=self.hparams['reg_type'])
                 reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
-            else:
+            elif self.reg_all == 'except_multi_head': 
+                # regularize everything except the multi-headed attention weights? 
                 if 'attn' not in name:
+                    reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
+            elif self.reg_all == 'except_multi_head_ief': 
+                if 'attn' not in name and 'logcell' not in name \
+                    and 'treatment_exp' not in name and 'control_layer' not in name: 
                     reg_loss += self.C*apply_reg(param, reg_type=self.reg_type)
         loss = torch.mean(reg_loss)
 #         if full_ret_loss: 
@@ -358,10 +365,11 @@ class SSM(Model):
         parser.add_argument('--elbo_samples', type=int, default=1, help='number of samples to run through inference network')        
         parser.add_argument('--augmented', type=strtobool, default=False, help='SSM augmented')        
         parser.add_argument('--C', type=float, default=.01, help='regularization strength')
+        parser.add_argument('--inf_noise', type=float, default=.01, help='noise parameter on input')
         parser.add_argument('--nheads', type=int, default=1, help='number of heads for attention inference network and generative model')        
         parser.add_argument('--rank', type=int, default=5, help='rank of matrix for low_rank posterior approximation')
         parser.add_argument('--combiner_type', type=str, default='pog', help='combiner function used in inference network')
-        parser.add_argument('--reg_all', type=strtobool, default=False, help='regularize all weights or only subset')    
+        parser.add_argument('--reg_all', type=str, default='all', help='regularize all weights or only subset')    
         parser.add_argument('--reg_type', type=str, default='l2', help='regularization type (l1 or l2)')
         parser.add_argument('--alpha1_type', type=str, default='linear', help='alpha1 parameterization in TreatExp IEF')
         parser.add_argument('--zmatrix', type=str, default='identity')
