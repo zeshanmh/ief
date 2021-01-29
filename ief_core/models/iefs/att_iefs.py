@@ -45,7 +45,12 @@ class AttentionIEFTransition(nn.Module):
         self.dim_input        = dim_input
         self.dim_treat        = dim_treat
         if not self.response_only:
-            self.linear_layer = nn.Parameter(torch.eye(dim_stochastic))#nn.Linear(dim_stochastic, dim_stochastic) # take this out
+            # three dimensions to 0 
+            I = torch.zeros(dim_stochastic,dim_stochastic)
+            I[0,0] = 1.; I[1,1] = 1.; I[2,2] = 1.
+#             self.linear_layer = nn.Parameter(torch.eye(dim_stochastic)*0.)#nn.Linear(dim_stochastic, dim_stochastic) # take this out
+            self.linear_layer = nn.Parameter(I)#nn.Linear(dim_stochastic, dim_stochastic) # take this out
+            
             if otype == 'linear': 
                 self.out_layer    = nn.Linear(dim_stochastic, dim_output) 
             elif otype == 'nl': 

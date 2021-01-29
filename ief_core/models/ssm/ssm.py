@@ -125,8 +125,6 @@ class SSM(Model):
         B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
         m_t, m_g_t, _      = get_masks(M[:,1:,:])
         Z_t, q_zt          = self.inf_network(X, A, M, B)
-#         idxs = np.random.choice(Z_t.shape[-1],size=6,replace=False)
-#         Z_t[...,idxs] = 1.
         Tmax               = Z_t.shape[1]
         p_x_mu, p_x_std    = self.p_X_Z(Z_t, A[:,1:Tmax+1,[0]])
         p_zt               = self.p_Zt_Ztm1(Z_t, A, B, X, A[:,0,:])

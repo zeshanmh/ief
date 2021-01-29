@@ -32,7 +32,7 @@ class MetricsCallback(Callback):
         self.metrics = []
 
     def on_validation_end(self, trainer, pl_module):
-        self.metrics.append(trainer.callback_metrics)
+        self.metrics.append(trainer.callback_metrics['val_loss'].item())
 
 def objective(trial, args): 
     dict_args = vars(args)
@@ -56,6 +56,7 @@ def objective(trial, args):
         model = SDMM(trial, **dict_args)
 
     metrics_callback = MetricsCallback()
+    checkpoint_callback = ModelCheckpoint(filepath='./checkpoints/mmfold_someones' + str(args.fold) + str(args.dim_stochastic) + '_' + args.ttype + '_' + args.include_baseline + args.include_treatment + '_ssm_baseablation{epoch:05d}-{val_loss:.2f}')
     trainer = Trainer.from_argparse_args(args, 
         deterministic=True, 
         logger=False, 
@@ -67,7 +68,7 @@ def objective(trial, args):
         progress_bar_refresh_rate=0
     )
     trainer.fit(model)
-    return min([x['val_loss'].item() for x in metrics_callback.metrics])
+    return min([x for x in metrics_callback.metrics])
 
 if __name__ == '__main__':
     parser = ArgumentParser()
