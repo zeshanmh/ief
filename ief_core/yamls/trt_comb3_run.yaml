@@ -9,10 +9,10 @@ search:
   params:
     - name: reg_all 
       spec: discrete 
-      values: ['all', 'except_multi_head', 'except_multi_head_ief']
+      values: ['except_multi_head_ief']
     - name: reg_strength
       spec: discrete 
-      values: [.01,.1,1,10]
+      values: [.01,.1,1]
     - name: reg_type 
       spec: discrete 
       values: ['l1', 'l2']
@@ -24,13 +24,13 @@ search:
       values: ['none_trt', 'lines']
     - name: dim_hidden
       spec: discrete 
-      values: [100,300,500,750]
+      values: [100,300]
     - name: dim_stochastic
       spec: discrete 
-      values: [16,48,64,128]
+      values: [48,64,128]
     - name: inf_noise
       spec: discrete 
       values: [0.01,0.05]
     - name: zmatrix
       spec: discrete 
-      values: ['zeros', 'partial']
+      values: ['zeros']
