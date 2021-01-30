@@ -38,8 +38,8 @@ class SSMBaseline(SSM):
     def init_model(self): 
         ttype       = self.hparams['ttype']; etype = self.hparams['etype']
         dim_hidden  = self.hparams['dim_hidden']
-        # dim_stochastic = self.hparams['dim_stochastic']
-        dim_stochastic = self.trial.suggest_categorical('dim_stochastic',[16,48])
+        dim_stochastic = self.hparams['dim_stochastic']
+#         dim_stochastic = self.trial.suggest_categorical('dim_stochastic',[16,48])
         num_heads   = self.hparams['nheads']
         dim_data    = self.hparams['dim_data']
         dim_base    = self.hparams['dim_base']
@@ -49,14 +49,17 @@ class SSMBaseline(SSM):
         augmented   = self.hparams['augmented']; alpha1_type = self.hparams['alpha1_type']
         rank        = self.hparams['rank']; combiner_type = self.hparams['combiner_type']; nheads = self.hparams['nheads']
         add_stochastic = self.hparams['add_stochastic']
+        zmatrix     = self.hparams['zmatrix']
+        self.inf_noise = np.abs(self.hparams['inf_noise'])
+
 
         # Inference Network
         if inftype == 'rnn':
-            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, combiner_type = combiner_type)
         elif inftype == 'rnn_bn':
-            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, use_bn=True, combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, use_bn=True, combiner_type = combiner_type)
         elif inftype == 'rnn_relu':
-            self.inf_network    = RNN_STInf(self.trial, dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, nl='relu', combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, nl='relu', combiner_type = combiner_type)
         elif inftype == 'att':
             self.inf_network    = Attention_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, nheads = num_heads, post_approx = post_approx, rank = rank)
         else:
@@ -77,10 +80,10 @@ class SSMBaseline(SSM):
         # Transition Function
         if self.hparams['include_baseline']:
             self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat+dim_base, dim_hidden, ttype, \
-                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)                
+                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads, zmatrix=zmatrix)                
         else:
             self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat, dim_hidden, ttype, \
-                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads)
+                augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads, zmatrix=zmatrix)
         
         # Prior over Z1
         self.prior_W        = nn.Linear(dim_treat+dim_data+dim_base, dim_stochastic)
