@@ -87,8 +87,8 @@ class AttentionIEFTransition(nn.Module):
         inp        = self.inp_layer(inpx)
         # out_linears= [torch.tanh(l(con))[...,None] for l in self.control_layers]
         # out_te     = [t(inp,con,eps=eps)[...,None] for t in self.treatment_exps]
-#         out_linear = inp*torch.tanh(self.control_layer(con))
-        out_linear = torch.tanh(self.control_layer(con))
+        out_linear = inp*torch.tanh(self.control_layer(con))
+#         out_linear = torch.tanh(self.control_layer(con))
         out_te     = self.treatment_exp(inp, con, eps=eps)
         out_logcell= self.logcell(inp, con)
         # f   = tuple(out_linears + [out_te, out_logcell])
