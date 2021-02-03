@@ -1,9 +1,9 @@
 search:
   job_template:
-    name: mm_moe_baseline
+    name: syn_moe_baseline
     sku: G1
     command:
-    - python main_trainer.py --model_name ssm --ttype moe --reg_all {reg_all} --C {reg_strength} --reg_type {reg_type} --fold 1 --max_epochs 15000 --include_baseline {bfeat} --include_treatment {tfeat} --dim_hidden {dim_hidden} --dim_stochastic {dim_stochastic} --zmatrix {zmatrix} --inf_noise {inf_noise} --data_dir /afs/csail.mit.edu/u/z/zeshanmh/research/ief/data/ml_mmrf/ml_mmrf/output/cleaned_mm_fold_2mos.pkl
+    - python main_trainer.py --model_name ssm --ttype moe --reg_all {reg_all} --C {reg_strength} --reg_type {reg_type} --fold 1 --max_epochs 15000 --include_baseline {bfeat} --include_treatment {tfeat} --dataset synthetic --nsamples_syn {nsamples_syn} --dim_hidden {dim_hidden} --dim_stochastic {dim_stochastic} --zmatrix {zmatrix} --inf_noise {inf_noise} --data_dir /afs/csail.mit.edu/u/z/zeshanmh/research/ief/data/ml_mmrf/ml_mmrf/output/cleaned_mm_fold_2mos.pkl
   type: grid
   max_trials:  1000
   params:
@@ -28,6 +28,9 @@ search:
     - name: dim_stochastic
       spec: discrete 
       values: [16,48,64,128]
+    - name: nsamples_syn
+      spec: discrete 
+      values: [100,1000]
     - name: inf_noise
       spec: discrete 
       values: [0.0]
