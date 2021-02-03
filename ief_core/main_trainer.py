@@ -56,16 +56,20 @@ def objective(trial, args):
         model = SDMM(trial, **dict_args)
 
     metrics_callback = MetricsCallback()
-    checkpoint_callback = ModelCheckpoint(filepath='./checkpoints/mmfold_someones' + str(args.fold) + str(args.dim_stochastic) + '_' + args.ttype + '_' + args.include_baseline + args.include_treatment + '_ssm_baseablation{epoch:05d}-{val_loss:.2f}')
+    if args.ckpt_path != 'none': 
+#         checkpoint_callback = ModelCheckpoint(filepath=args.ckpt_path + str(args.fold) + str(args.dim_stochastic) + '_' + args.ttype + '_' + args.include_baseline + args.include_treatment + args.zmatrix + '_ssm_baseablation{epoch:05d}-{val_loss:.2f}')
+        checkpoint_callback = ModelCheckpoint(filepath=args.ckpt_path + str(args.nsamples_syn) + str(args.fold) + str(args.dim_stochastic) + '_' + args.ttype + '_ssm_{epoch:05d}-{val_loss:.2f}')
+    else: 
+        checkpoint_callback = False
     trainer = Trainer.from_argparse_args(args, 
         deterministic=True, 
         logger=False, 
         gpus=[args.gpu_id], 
-        checkpoint_callback=False, 
+        checkpoint_callback=checkpoint_callback, 
         callbacks=[metrics_callback], 
 #         early_stop_callback=PyTorchLightningPruningCallback(trial, monitor='val_loss')
         early_stop_callback=False,
-        progress_bar_refresh_rate=0
+        progress_bar_refresh_rate=1
     )
     trainer.fit(model)
     return min([x for x in metrics_callback.metrics])
@@ -96,6 +100,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_optuna_trials', default=100, type=int)
     parser.add_argument('--include_baseline', type=str, default='all')
     parser.add_argument('--include_treatment', type=str, default='lines')
+    parser.add_argument('--ckpt_path', type=str, default='none')
     parser.add_argument('--cluster_run', type=strtobool, default=True)
     parser.add_argument('--data_dir', type=str, \
             default='/afs/csail.mit.edu/u/z/zeshanmh/research/ief/data/ml_mmrf/ml_mmrf/output/cleaned_mm_fold_2mos.pkl')
