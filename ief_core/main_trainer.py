@@ -58,7 +58,7 @@ def objective(trial, args):
     metrics_callback = MetricsCallback()
     if args.ckpt_path != 'none': 
 #         checkpoint_callback = ModelCheckpoint(filepath=args.ckpt_path + str(args.fold) + str(args.dim_stochastic) + '_' + args.ttype + '_' + args.include_baseline + args.include_treatment + args.zmatrix + '_ssm_baseablation{epoch:05d}-{val_loss:.2f}')
-        checkpoint_callback = ModelCheckpoint(filepath=args.ckpt_path + str(args.nsamples_syn) + str(args.fold) + str(args.dim_stochastic) + '_' + args.ttype + '_ssm_{epoch:05d}-{val_loss:.2f}')
+        checkpoint_callback = ModelCheckpoint(filepath=args.ckpt_path + str(args.nsamples_syn) + str(args.fold) + str(args.dim_stochastic) + '_' + args.ttype + '_{epoch:05d}-{val_loss:.2f}')
     else: 
         checkpoint_callback = False
     trainer = Trainer.from_argparse_args(args, 
