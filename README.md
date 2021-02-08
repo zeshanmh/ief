@@ -11,7 +11,8 @@ To run a hyperparameter sweep on a new dataset:
 3. **Run hyperparameter sweep**: To run a hyperparameter sweep, define a config file in ```ief_core/configs```. A test one has been provided. Then, run: ```python launch_run.py --config [NAME OF CONFIG FILE]```. 
 
 To train a model given a specific set of hyperparameters, 
-1. **Define train function**: If you would like to train a single model, you can define a ```train``` function similar to the examples shown in ```ief_core/tests/short_run.py```. These examples show how to instantiate and specify the hyperparameters of a model.
-2. **Run python file**:  Then, simply run ```python ief_core/tests/short_run.py``` and a checkpoint of the model will be saved in ```ief_core/tests/checkpoints```. 
+1. **Go into correct directory**: Go into ```ief/ief_core```, 
+2. **Run command**: Run ```python main_trainer.py --model_name ssm --ttype lin --reg_type l2 --reg_all all --C 0.01 --dim_stochastic 48 --dim_hidden 300 --fold 1 --max_epochs 15000 --dataset mm --inf_noise 0.0 --data_dir /afs/csail.mit.edu/u/z/zeshanmh/research/ief/data/ml_mmrf/ml_mmrf/output/cleaned_mm_fold_2mos_comb3.pkl```
+3. **Specify appropriate hyperparameters**: You can specify the hyperparameters of the model as shown above. Please see ```ief_core/main_trainer.py``` and ```ief_core/models/ssm/ssm.py``` for all options. To specify a path to save a checkpoint (corresponding to model with best validation loss), simply add ```--ckpt_path [PATH TO OUTPUT FILE]``` to the command in step 2.
 
-Finally, to recreate the plots in the paper, see ```examples/model_analyses_aaai.ipynb```. 
+Finally, to recreate the plots in the paper, see ```examples/model_analyses_final.ipynb```. 
