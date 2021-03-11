@@ -30,9 +30,11 @@ class MetricsCallback(Callback):
     def __init__(self):
         super().__init__()
         self.metrics = []
+        self.train_loss = []
 
     def on_validation_end(self, trainer, pl_module):
         self.metrics.append(trainer.callback_metrics['val_loss'].item())
+        self.train_loss.append(trainer.callback_metrics['loss'].item())
 
 def objective(trial, args): 
     dict_args = vars(args)
@@ -57,7 +59,6 @@ def objective(trial, args):
 
     metrics_callback = MetricsCallback()
     if args.ckpt_path != 'none': 
-#         checkpoint_callback = ModelCheckpoint(filepath=args.ckpt_path + str(args.fold) + str(args.dim_stochastic) + '_' + args.ttype + '_' + args.include_baseline + args.include_treatment + args.zmatrix + '_ssm_baseablation{epoch:05d}-{val_loss:.2f}')
         checkpoint_callback = ModelCheckpoint(filepath=args.ckpt_path + str(args.nsamples_syn) + str(args.fold) + str(args.dim_stochastic) + '_' + args.ttype + '_{epoch:05d}-{val_loss:.2f}')
     else: 
         checkpoint_callback = False
@@ -72,7 +73,7 @@ def objective(trial, args):
         progress_bar_refresh_rate=1
     )
     trainer.fit(model)
-    return min([x for x in metrics_callback.metrics])
+    return min([x for x in metrics_callback.metrics]), metrics_callback.metrics, metrics_callback.train_loss
 
 if __name__ == '__main__':
     parser = ArgumentParser()
@@ -155,5 +156,7 @@ if __name__ == '__main__':
                 fi.write(f'\t\t{k}: {v}\n')
     else: 
         trial = optuna.trial.FixedTrial({'bs': args.bs, 'lr': args.lr, 'C': args.C, 'reg_all': args.reg_all, 'reg_type': args.reg_type, 'dim_stochastic': args.dim_stochastic})    
-        best_nelbo = objective(trial, args)
+        best_nelbo, val_nelbos, train_losses = objective(trial, args)
+        import pdb; pdb.set_trace()
         print(f'BEST_NELBO: {best_nelbo}')
+        ## TODO for Linden: save val_nelbos and train_losses to .csv and plot them ## 

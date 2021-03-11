@@ -3,6 +3,7 @@ search:
     name: mm_ablation_pkpd
     sku: G1
     command:
+       # also try --ttype lin
     - python main_trainer.py --model_name ssm --ttype attn_transition --reg_all {reg_all} --C {reg_strength} --reg_type {reg_type} --fold 1 --max_epochs 15000 --include_baseline {bfeat} --include_treatment {tfeat} --dim_hidden {dim_hidden} --dim_stochastic {dim_stochastic} --data_dir "add DATA dir here"
   type: grid
   max_trials:  500
