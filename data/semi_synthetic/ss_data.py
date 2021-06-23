@@ -128,7 +128,8 @@ def add_missingness(x, m, per_missing=0.4):
     return new_x, new_m 
 
 def gen_ss_data(in_sample_dist=True, add_missing=False, eval_mult=30, add_syn_marker=False, restrict_markers=False): 
-    model_path = '../../ief_core/tests/checkpoints/mmfold1_regFalse_ssm_att1epoch=13142-val_loss=63.89.ckpt'
+    model_path = os.path.join(fpath,'../../ief_core/tests/checkpoints/mmfold1_regFalse_ssm_att1epoch=13142-val_loss=63.89.ckpt')
+    #model_path = '../../ief_core/tests/checkpoints/mmfold1_regFalse_ssm_att1epoch=13142-val_loss=63.89.ckpt'
     if torch.cuda.is_available():
         device = torch.device('cuda')
     else:
@@ -137,6 +138,9 @@ def gen_ss_data(in_sample_dist=True, add_missing=False, eval_mult=30, add_syn_ma
     checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
     hparams    = checkpoint['hyper_parameters']
     del hparams['trial']
+    data_dir = '/afs/csail.mit.edu/u/z/zeshanmh/research/ief/data/ml_mmrf/ml_mmrf/output/cleaned_mm_fold_2mos.pkl'
+    hparams['data_dir'] = data_dir 
+    hparams['zmatrix']  = 'identity'
     trial = optuna.trial.FixedTrial({'bs': hparams.bs, 'lr': hparams.lr, 'C': hparams.C, 'reg_all': hparams.reg_all, 'reg_type': hparams.reg_type, 'dim_stochastic': hparams.dim_stochastic})
     model = SSM(trial, **hparams)
     model.setup(1)
