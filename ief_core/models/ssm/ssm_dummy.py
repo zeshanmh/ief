@@ -40,6 +40,7 @@ class SSM(Model):
         augmented   = self.hparams['augmented']; alpha1_type = self.hparams['alpha1_type']
         rank        = self.hparams['rank']; combiner_type = self.hparams['combiner_type']; nheads = self.hparams['nheads']
         add_stochastic = self.hparams['add_stochastic']
+        zmatrix = self.hparams['zmatrix']
 
         # Inference Network
         if inftype == 'rnn':
@@ -349,6 +350,7 @@ class SSM(Model):
         parser.add_argument('--reg_all', type=strtobool, default=False, help='regularize all weights or only subset')    
         parser.add_argument('--reg_type', type=str, default='l2', help='regularization type (l1 or l2)')
         parser.add_argument('--alpha1_type', type=str, default='linear', help='alpha1 parameterization in TreatExp IEF')
+        parser.add_argument('--zmatrix', type=str, default='identity')
         parser.add_argument('--otype', type=str, default='linear', help='final layer of GroMOdE IEF (linear, identity, nl)')
         parser.add_argument('--add_stochastic', type=strtobool, default=False, help='conditioning alpha-1 of TEXP on S_[t-1]')
         parser.add_argument('--clock_ablation', type=strtobool, default=False, help='set to true to run without local clock')
@@ -504,7 +506,8 @@ class TransitionFunction(nn.Module):
                  alpha1_type: str = 'linear', 
                  otype: str = 'linear', 
                  add_stochastic: bool = False, 
-                 num_heads: int = 1):
+                 num_heads: int = 1,
+                 zmatrix: str = 'identity'): 
         super(TransitionFunction, self).__init__()
         self.dim_stochastic  = dim_stochastic
         self.dim_treat       = dim_treat
@@ -546,7 +549,7 @@ class TransitionFunction(nn.Module):
             avoid_init = False
             if self.dim_data != 16:
                 avoid_init = True
-            self.t_mu               = AttentionIEFTransition(dim_input, dim_treat, avoid_init = avoid_init, dim_output=dim_stochastic, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic, num_heads=num_heads)
+            self.t_mu               = AttentionIEFTransition(dim_input, dim_treat, avoid_init = avoid_init, dim_output=dim_stochastic, alpha1_type=alpha1_type, otype=otype, add_stochastic=add_stochastic, num_heads=num_heads, zmatrix=zmatrix)
             self.t_sigma            = nn.Linear(dim_input+dim_treat, dim_stochastic)
         elif self.ttype == 'moe': 
             self.t_mu               = MofE(dim_input, dim_treat, dim_output=dim_stochastic, eclass='nl', num_experts=3) 

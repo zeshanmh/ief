@@ -365,7 +365,7 @@ class SSM(Model):
         parser.add_argument('--elbo_samples', type=int, default=1, help='number of samples to run through inference network')        
         parser.add_argument('--augmented', type=strtobool, default=False, help='SSM augmented')        
         parser.add_argument('--C', type=float, default=.01, help='regularization strength')
-        parser.add_argument('--inf_noise', type=float, default=.01, help='noise parameter on input')
+        parser.add_argument('--inf_noise', type=float, default=0., help='noise parameter on input')
         parser.add_argument('--nheads', type=int, default=1, help='number of heads for attention inference network and generative model')        
         parser.add_argument('--rank', type=int, default=5, help='rank of matrix for low_rank posterior approximation')
         parser.add_argument('--combiner_type', type=str, default='pog', help='combiner function used in inference network')
