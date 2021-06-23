@@ -7,3 +7,4 @@ pip install git+https://github.com/rtqichen/torchdiffeq
 conda install -c conda-forge ncurses
 pip install pytorch-lightning
 pip install pytest 
+pip install optuna imblearn
