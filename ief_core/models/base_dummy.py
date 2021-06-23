@@ -152,14 +152,17 @@ class Model(pl.LightningModule):
         See load_mmrf() function in data.py file in ml_mmrf folder.
         '''
         fold = self.hparams['fold']
+        data_dir = self.hparams['data_dir']
         if self.hparams['dataset'] == 'mm': 
             ddata = load_mmrf(fold_span = [fold], \
-                              digitize_K = 0, \
+                              digitize_K = 20, \
                               digitize_method = 'uniform', \
-                              suffix='_2mos_tr', \
-                              restrict_markers=False, \
+                              data_dir=data_dir, \
+                              restrict_markers=[], \
                               add_syn_marker=False, \
-                              window='first_second')
+                              window='all',
+                              data_aug=False,
+                              ablation=False)
 #             ddata = load_mmrf(fold_span = [fold], digitize_K = 0, digitize_method = 'uniform', suffix='_2mos_tr')
 
         elif self.hparams['dataset'] == 'synthetic': 

@@ -31,8 +31,8 @@ class Model(pl.LightningModule):
         self.trial = trial
         self.bs = trial.suggest_categorical('bs', [600,1500])
         self.lr = 1e-3
-        self.C  = trial.suggest_categorical('C', [.001,.01,.1,1,10])
-        self.reg_all  = trial.suggest_categorical('reg_all', ['all', 'except_multi_head', 'except_multi_head_ief'])
+        self.C  = trial.suggest_categorical('C', [0.0,.001,.01,.1,1,10])
+        self.reg_all  = trial.suggest_categorical('reg_all', ['all', 'except_multi_head', 'except_multi_head_ief', True, False])
         self.reg_type = trial.suggest_categorical('reg_type', ['l1', 'l2'])
     
     def forward(self,**kwargs):
