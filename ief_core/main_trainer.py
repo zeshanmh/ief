@@ -16,12 +16,13 @@ from models.ssm.ssm_baseline import SSMBaseline
 from models.rnn import GRU 
 from models.sfomm import SFOMM
 from distutils.util import strtobool
+from models.base import DataModule
 
 
 '''
 Name: main_trainer.py 
 Purpose: High-level training script 
-Usage: Not meant to use directly, but rather will be called by launch_run.py.
+Usage: May use directly, or use launch_run.py to run multiple.
 '''
 
 class MetricsCallback(Callback):
@@ -34,11 +35,12 @@ class MetricsCallback(Callback):
 
     def on_validation_end(self, trainer, pl_module):
         self.metrics.append(trainer.callback_metrics['val_loss'].item())
-        self.train_loss.append(trainer.callback_metrics['loss'].item())
+        if 'loss' in trainer.callback_metrics: 
+            self.train_loss.append(trainer.callback_metrics['loss'].item())
 
 def objective(trial, args): 
     dict_args = vars(args)
-
+    
     # pick model
     if args.model_name == 'fomm':
         model = FOMM(trial, **dict_args)
@@ -56,7 +58,8 @@ def objective(trial, args):
         model = SFOMM(trial, **dict_args)
     elif args.model_name == 'sdmm': 
         model = SDMM(trial, **dict_args)
-
+    
+    dm = DataModule(dict_args, model)
     metrics_callback = MetricsCallback()
     if args.ckpt_path != 'none': 
         checkpoint_callback = ModelCheckpoint(filepath=args.ckpt_path + str(args.nsamples_syn) + str(args.fold) + str(args.dim_stochastic) + '_' + args.ttype + '_{epoch:05d}-{val_loss:.2f}')
@@ -68,11 +71,9 @@ def objective(trial, args):
         gpus=[args.gpu_id], 
         checkpoint_callback=checkpoint_callback, 
         callbacks=[metrics_callback], 
-#         early_stop_callback=PyTorchLightningPruningCallback(trial, monitor='val_loss')
-        early_stop_callback=False,
         progress_bar_refresh_rate=1
     )
-    trainer.fit(model)
+    trainer.fit(model, dm)
     return min([x for x in metrics_callback.metrics]), metrics_callback.metrics, metrics_callback.train_loss
 
 if __name__ == '__main__':
@@ -157,6 +158,5 @@ if __name__ == '__main__':
     else: 
         trial = optuna.trial.FixedTrial({'bs': args.bs, 'lr': args.lr, 'C': args.C, 'reg_all': args.reg_all, 'reg_type': args.reg_type, 'dim_stochastic': args.dim_stochastic})    
         best_nelbo, val_nelbos, train_losses = objective(trial, args)
-        import pdb; pdb.set_trace()
         print(f'BEST_NELBO: {best_nelbo}')
         ## TODO for Linden: save val_nelbos and train_losses to .csv and plot them ## 

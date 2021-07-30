@@ -6,8 +6,7 @@ import pytorch_lightning as pl
 import sys 
 from lifelines.utils import concordance_index
 from sklearn.metrics import r2_score
-from pytorch_lightning.metrics.functional import f1_score, precision_recall, auroc
-#from pytorch_lightning.metrics.sklearns import F1, Precision, Recall
+from torchmetrics.functional import f1, precision_recall, auroc
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from torchcontrib.optim import SWA
 fpath= os.path.dirname(os.path.realpath(__file__))
@@ -16,6 +15,107 @@ sys.path.append(os.path.join(fpath,'../data/'))
 from ml_mmrf.data import load_mmrf
 from synthetic.synthetic_data import load_synthetic_data_trt, load_synthetic_data_noisy
 from models.utils import *
+
+class DataModule(pl.LightningDataModule): 
+    def __init__(self): 
+        super().__init__()
+        
+    def setup(self, stage): 
+        ''' 
+        When adding a dataset (e.g. VA MM dataset), the data loading function should return 
+        the following structure: 
+            key: fold number, val: dictionary ==> {key: 'train', 'test', 'valid', \
+                val: dictionary ==> {key: data type ('x','m'), val: np matrix}}
+        See load_mmrf() function in data.py file in ml_mmrf folder.
+        '''
+        fold = self.hparams['fold']
+        data_dir = self.hparams['data_dir']
+        if self.hparams['dataset'] == 'mm': 
+            ddata = load_mmrf(fold_span = [fold], \
+                              digitize_K = 20, \
+                              digitize_method = 'uniform', \
+                              data_dir=data_dir, \
+                              restrict_markers=[], \
+                              add_syn_marker=False, \
+                              window='all',
+                              data_aug=False,
+                              ablation=False)
+
+        elif self.hparams['dataset'] == 'synthetic': 
+            nsamples        = {'train':self.hparams['nsamples_syn'], 'valid':1000, 'test':200}
+            print(f'training on {nsamples["train"]} samples')
+            alpha_1_complex = False; per_missing = 0.; add_feat = 0; num_trt = 1
+            ddata = load_synthetic_data_trt(fold_span = [fold], \
+                                            nsamples = nsamples, \
+                                            distractor_dims_b=4, \
+                                            sigma_ys=0.7, \
+                                            include_line=True, \
+                                            alpha_1_complex=alpha_1_complex, \
+                                            per_missing=per_missing, \
+                                            add_feats=add_feat, \
+                                            num_trt=num_trt, \
+                                            sub=True)
+
+        if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic': 
+            self.hparams['dim_base']  = ddata[fold]['train']['b'].shape[-1]
+            self.hparams['dim_data']  = ddata[fold]['train']['x'].shape[-1]
+            self.hparams['dim_treat'] = ddata[fold]['train']['a'].shape[-1]
+
+        if self.hparams['eval_type'] == 'f1': 
+            self.f1 = F1(average='weighted')
+            self.precision = Precision(average='weighted')
+            self.recall = Recall(average='weighted')
+
+        self.ddata = ddata 
+        self.init_model()
+        
+    def load_helper(self, tvt, device=None, oversample=True, att_mask=False):
+        fold = self.hparams['fold']; batch_size = self.bs
+
+        if device is not None: 
+            B  = torch.from_numpy(self.ddata[fold][tvt]['b'].astype('float32')).to(device)
+            X  = torch.from_numpy(self.ddata[fold][tvt]['x'].astype('float32')).to(device)
+            A  = torch.from_numpy(self.ddata[fold][tvt]['a'].astype('float32')).to(device)
+            M  = torch.from_numpy(self.ddata[fold][tvt]['m'].astype('float32')).to(device)
+        else: 
+            B  = torch.from_numpy(self.ddata[fold][tvt]['b'].astype('float32'))
+            X  = torch.from_numpy(self.ddata[fold][tvt]['x'].astype('float32'))
+            A  = torch.from_numpy(self.ddata[fold][tvt]['a'].astype('float32'))
+            M  = torch.from_numpy(self.ddata[fold][tvt]['m'].astype('float32'))
+
+        y_vals   = self.ddata[fold][tvt]['ys_seq'][:,0].astype('float32')
+        idx_sort = np.argsort(y_vals)
+
+        if 'digitized_y' in self.ddata[fold][tvt]:
+            print ('using digitized y')
+            Y  = torch.from_numpy(self.ddata[fold][tvt]['digitized_y'].astype('float32'))
+        else:
+            Y  = torch.from_numpy(self.ddata[fold][tvt]['ys_seq'][:,[0]]).squeeze()
+
+        if device is not None: 
+            Y = Y.to(device)
+            CE = torch.from_numpy(self.ddata[fold][tvt]['ce'].astype('float32')).to(device)
+        else: 
+            CE = torch.from_numpy(self.ddata[fold][tvt]['ce'].astype('float32'))
+
+        if att_mask: 
+            attn_shape  = (A.shape[0],A.shape[1],A.shape[1])
+            Am   = get_attn_mask(attn_shape, self.ddata[fold][tvt]['a'].astype('float32'), device)
+            data = TensorDataset(B[idx_sort], X[idx_sort], A[idx_sort], M[idx_sort], Y[idx_sort], CE[idx_sort], Am[idx_sort])
+        else: 
+            data = TensorDataset(B[idx_sort], X[idx_sort], A[idx_sort], M[idx_sort], Y[idx_sort], CE[idx_sort])
+        data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
+        return data, data_loader
+
+    def train_dataloader(self):
+        if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
+            _, train_loader = self.load_helper(tvt='train', att_mask=self.hparams['att_mask'])
+        return train_loader
+
+    def val_dataloader(self):
+        if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
+            _, valid_loader = self.load_helper(tvt='valid', att_mask=self.hparams['att_mask'])
+        return valid_loader
 
 class Model(pl.LightningModule): 
 
@@ -142,102 +242,3 @@ class Model(pl.LightningModule):
         elif self.hparams['optimizer_name'] == 'swa': 
             opt = torch.optim.Adam(self.parameters(), lr=self.hparams['lr']) 
             return SWA(opt, swa_start=100, swa_freq=50, swa_lr=self.hparams['lr'])
-
-    def setup(self, stage): 
-        ''' 
-        When adding a dataset (e.g. VA MM dataset), the data loading function should return 
-        the following structure: 
-            key: fold number, val: dictionary ==> {key: 'train', 'test', 'valid', \
-                val: dictionary ==> {key: data type ('x','m'), val: np matrix}}
-        See load_mmrf() function in data.py file in ml_mmrf folder.
-        '''
-        fold = self.hparams['fold']
-        data_dir = self.hparams['data_dir']
-        if self.hparams['dataset'] == 'mm': 
-            ddata = load_mmrf(fold_span = [fold], \
-                              digitize_K = 20, \
-                              digitize_method = 'uniform', \
-                              data_dir=data_dir, \
-                              restrict_markers=[], \
-                              add_syn_marker=False, \
-                              window='all',
-                              data_aug=False,
-                              ablation=False)
-#             ddata = load_mmrf(fold_span = [fold], digitize_K = 0, digitize_method = 'uniform', suffix='_2mos_tr')
-
-        elif self.hparams['dataset'] == 'synthetic': 
-            nsamples        = {'train':self.hparams['nsamples_syn'], 'valid':1000, 'test':200}
-            print(f'training on {nsamples["train"]} samples')
-            alpha_1_complex = False; per_missing = 0.; add_feat = 0; num_trt = 1
-            ddata = load_synthetic_data_trt(fold_span = [fold], \
-                                            nsamples = nsamples, \
-                                            distractor_dims_b=4, \
-                                            sigma_ys=0.7, \
-                                            include_line=True, \
-                                            alpha_1_complex=alpha_1_complex, \
-                                            per_missing=per_missing, \
-                                            add_feats=add_feat, \
-                                            num_trt=num_trt, \
-                                            sub=True)
-
-        if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic': 
-            self.hparams['dim_base']  = ddata[fold]['train']['b'].shape[-1]
-            self.hparams['dim_data']  = ddata[fold]['train']['x'].shape[-1]
-            self.hparams['dim_treat'] = ddata[fold]['train']['a'].shape[-1]
-
-        if self.hparams['eval_type'] == 'f1': 
-            self.f1 = F1(average='weighted')
-            self.precision = Precision(average='weighted')
-            self.recall = Recall(average='weighted')
-
-        self.ddata = ddata 
-        self.init_model()
-        
-    def load_helper(self, tvt, device=None, oversample=True, att_mask=False):
-        fold = self.hparams['fold']; batch_size = self.bs
-
-        if device is not None: 
-            B  = torch.from_numpy(self.ddata[fold][tvt]['b'].astype('float32')).to(device)
-            X  = torch.from_numpy(self.ddata[fold][tvt]['x'].astype('float32')).to(device)
-            A  = torch.from_numpy(self.ddata[fold][tvt]['a'].astype('float32')).to(device)
-            M  = torch.from_numpy(self.ddata[fold][tvt]['m'].astype('float32')).to(device)
-        else: 
-            B  = torch.from_numpy(self.ddata[fold][tvt]['b'].astype('float32'))
-            X  = torch.from_numpy(self.ddata[fold][tvt]['x'].astype('float32'))
-            A  = torch.from_numpy(self.ddata[fold][tvt]['a'].astype('float32'))
-            M  = torch.from_numpy(self.ddata[fold][tvt]['m'].astype('float32'))
-
-        y_vals   = self.ddata[fold][tvt]['ys_seq'][:,0].astype('float32')
-        idx_sort = np.argsort(y_vals)
-
-        if 'digitized_y' in self.ddata[fold][tvt]:
-            print ('using digitized y')
-            Y  = torch.from_numpy(self.ddata[fold][tvt]['digitized_y'].astype('float32'))
-        else:
-            Y  = torch.from_numpy(self.ddata[fold][tvt]['ys_seq'][:,[0]]).squeeze()
-
-        if device is not None: 
-            Y = Y.to(device)
-            CE = torch.from_numpy(self.ddata[fold][tvt]['ce'].astype('float32')).to(device)
-        else: 
-            CE = torch.from_numpy(self.ddata[fold][tvt]['ce'].astype('float32'))
-
-        if att_mask: 
-            attn_shape  = (A.shape[0],A.shape[1],A.shape[1])
-            Am   = get_attn_mask(attn_shape, self.ddata[fold][tvt]['a'].astype('float32'), device)
-            data = TensorDataset(B[idx_sort], X[idx_sort], A[idx_sort], M[idx_sort], Y[idx_sort], CE[idx_sort], Am[idx_sort])
-        else: 
-            data = TensorDataset(B[idx_sort], X[idx_sort], A[idx_sort], M[idx_sort], Y[idx_sort], CE[idx_sort])
-        data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
-        return data, data_loader
-
-    def train_dataloader(self):
-        if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
-            _, train_loader = self.load_helper(tvt='train', att_mask=self.hparams['att_mask'])
-        return train_loader
-
-    def val_dataloader(self):
-        if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
-            _, valid_loader = self.load_helper(tvt='valid', att_mask=self.hparams['att_mask'])
-        return valid_loader
-

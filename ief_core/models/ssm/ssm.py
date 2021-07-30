@@ -581,7 +581,7 @@ class TransitionFunction(nn.Module):
         else:
             raise ValueError('bad ttype')
     
-    def apply(self, fxn, z, u, eps=0.):
+    def apply_fxn(self, fxn, z, u, eps=0.):
         if 'Monotonic' in fxn.__class__.__name__ or 'LogCellTransition' in fxn.__class__.__name__ or 'LogCellKill' in fxn.__class__.__name__ \
             or 'TreatmentExp' in fxn.__class__.__name__ or 'GatedTransition' in fxn.__class__.__name__ or 'Synthetic' in fxn.__class__.__name__ \
             or 'MofE' in fxn.__class__.__name__ or 'Ablation1' in fxn.__class__.__name__ or 'Ablation2' in fxn.__class__.__name__ \
@@ -596,8 +596,8 @@ class TransitionFunction(nn.Module):
             lot_oh    = u[...,-self.K:]
             mul, sigl = [], []
             for t_mu, t_sigma in zip(self.t_mu, self.t_sigma):
-                mu  = self.apply(t_mu, z, treat)[...,None] 
-                sig = torch.nn.functional.softplus(self.apply(t_sigma, z, treat))[...,None]
+                mu  = self.apply_fxn(t_mu, z, treat)[...,None] 
+                sig = torch.nn.functional.softplus(self.apply_fxn(t_sigma, z, treat))[...,None]
                 mul.append(mu)
                 sigl.append(sig)
             mu = torch.cat(mul,-1)
@@ -605,7 +605,7 @@ class TransitionFunction(nn.Module):
             mu = torch.sum(mu*lot_oh.unsqueeze(-2),-1)
             sig= torch.sum(sig*lot_oh.unsqueeze(-2),-1)+0.05
         else:
-            mu  = self.apply(self.t_mu, z, u, eps)
-            sig = torch.nn.functional.softplus(self.apply(self.t_sigma, z, u))
+            mu  = self.apply_fxn(self.t_mu, z, u, eps)
+            sig = torch.nn.functional.softplus(self.apply_fxn(self.t_sigma, z, u))
         return mu, sig
 
