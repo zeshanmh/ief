@@ -47,13 +47,21 @@ class SSM(Model):
         # Inference Network
         self.inf_noise = np.abs(self.hparams['inf_noise'])
         if inftype == 'rnn':
-            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, \
+                                            dim_stochastic, post_approx = post_approx, \
+                                            rank = rank, combiner_type = combiner_type)
         elif inftype == 'rnn_bn':
-            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, use_bn=True, combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, \
+                                            dim_stochastic, post_approx = post_approx, \
+                                            rank = rank, use_bn=True, combiner_type = combiner_type)
         elif inftype == 'rnn_relu':
-            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, post_approx = post_approx, rank = rank, nl='relu', combiner_type = combiner_type)
+            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, \
+                                            dim_stochastic, post_approx = post_approx, \
+                                            rank = rank, nl='relu', combiner_type = combiner_type)
         elif inftype == 'att':
-            self.inf_network    = Attention_STInf(dim_base, dim_data, dim_treat, dim_hidden, dim_stochastic, nheads = num_heads, post_approx = post_approx, rank = rank)
+            self.inf_network    = Attention_STInf(dim_base, dim_data, dim_treat, \
+                                                  dim_hidden, dim_stochastic, nheads = num_heads, \
+                                                  post_approx = post_approx, rank = rank)
         else:
             raise ValueError('Bad inference type')
 
@@ -68,7 +76,7 @@ class SSM(Model):
             self.e_sigma = nn.Sequential(emodel, nn.Linear(dim_hidden, dim_data))
         else:
             raise ValueError('bad etype')
-
+        
         # Transition Function
         if self.hparams['include_baseline'] != 'none':
             self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat+dim_base, dim_hidden, ttype, \
@@ -223,9 +231,12 @@ class SSM(Model):
             A[...,0] = torch.ones(A.shape[1])
         if self.training:
             if self.hparams['elbo_samples']>1:
-                B, X = torch.repeat_interleave(B, repeats=self.elbo_samples, dim=0), torch.repeat_interleave(X, repeats=self.elbo_samples, dim=0)
-                A, M = torch.repeat_interleave(A, repeats=self.elbo_samples, dim=0), torch.repeat_interleave(M, repeats=self.elbo_samples, dim=0)
-                Y, CE= torch.repeat_interleave(Y, repeats=self.elbo_samples, dim=0), torch.repeat_interleave(CE, repeats=self.elbo_samples, dim=0)
+                B, X = torch.repeat_interleave(B, repeats=self.elbo_samples, dim=0), \
+                    torch.repeat_interleave(X, repeats=self.elbo_samples, dim=0)
+                A, M = torch.repeat_interleave(A, repeats=self.elbo_samples, dim=0), \
+                    torch.repeat_interleave(M, repeats=self.elbo_samples, dim=0)
+                Y, CE= torch.repeat_interleave(Y, repeats=self.elbo_samples, dim=0), \
+                torch.repeat_interleave(CE, repeats=self.elbo_samples, dim=0)
             neg_elbo, masked_nll, kl, _  = self.get_loss(B, X, A, M, Y, CE, anneal = anneal, with_pred = True)
         else:
             neg_elbo, masked_nll, kl, _  = self.get_loss(B, X, A, M, Y, CE, anneal = anneal, with_pred = False)
@@ -276,6 +287,7 @@ class SSM(Model):
     def inspect(self, T_forward, T_condition, B, X, A, M, Y, CE, restrict_lens = False, nsamples = 1, eps = 0.):
         self.eval()
         m_t, _, lens           = get_masks(M)
+        import pdb; pdb.set_trace()
         idx_select = lens>1
         B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
         m_t, m_g_t, lens   = get_masks(M[:,1:,:])
@@ -608,4 +620,3 @@ class TransitionFunction(nn.Module):
             mu  = self.apply_fxn(self.t_mu, z, u, eps)
             sig = torch.nn.functional.softplus(self.apply_fxn(self.t_sigma, z, u))
         return mu, sig
-
