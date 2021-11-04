@@ -61,20 +61,27 @@ def objective(trial, args):
     
     dm = DataModule(dict_args, model)
     metrics_callback = MetricsCallback()
+    import pdb; pdb.set_trace()
     if args.ckpt_path != 'none': 
-        checkpoint_callback = ModelCheckpoint(filepath=args.ckpt_path + str(args.nsamples_syn) + str(args.fold) + str(args.dim_stochastic) + '_' + args.ttype + '_{epoch:05d}-{val_loss:.2f}')
+        checkpoint_callback = ModelCheckpoint(
+            monitor='val_loss', \
+            dirpath=args.ckpt_path, \
+            filename='ssm_ects_debug' + str(args.fold) + str(args.dim_stochastic) \
+                        + '_' + args.ttype + '_{epoch:05d}-{val_loss:.2f}', \
+            mode='min', \
+            every_n_val_epochs=2)
     else: 
         checkpoint_callback = False
     trainer = Trainer.from_argparse_args(args, 
         deterministic=True, 
         logger=False, 
         gpus=[args.gpu_id], 
-        checkpoint_callback=checkpoint_callback, 
-        callbacks=[metrics_callback], 
+        callbacks=[metrics_callback, checkpoint_callback], 
         progress_bar_refresh_rate=1
     )
     trainer.fit(model, dm)
     return min([x for x in metrics_callback.metrics]), metrics_callback.metrics, metrics_callback.train_loss
+
 
 if __name__ == '__main__':
     parser = ArgumentParser()
