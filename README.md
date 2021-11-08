@@ -12,7 +12,7 @@ To run a hyperparameter sweep on a new dataset:
 
 To train a model given a specific set of hyperparameters, 
 1. **Go into correct directory**: Go into ```ief/ief_core```, 
-2. **Run command**: Run ```python main_trainer.py --model_name ssm --ttype lin --reg_type l2 --reg_all all --C 0.01 --dim_stochastic 48 --dim_hidden 300 --fold 1 --max_epochs 15000 --dataset mm --inf_noise 0.0 --data_dir /afs/csail.mit.edu/u/z/zeshanmh/research/ief/data/ml_mmrf/ml_mmrf/output/cleaned_mm_fold_2mos_comb3.pkl```
+2. **Run command**: Run ```python main_trainer.py --model_name ssm --ttype attn_transition --reg_type l2 --reg_all all --C 0.01 --dim_stochastic 48 --dim_hidden 300 --fold 1 --max_epochs 15000 --dataset mm --inf_noise 0.0 --data_dir /afs/csail.mit.edu/u/z/zeshanmh/research/ief/data/ml_mmrf/ml_mmrf/output/cleaned_mm_fold_2mos_comb3.pkl```
 3. **Specify appropriate hyperparameters**: You can specify the hyperparameters of the model as shown above. Please see ```ief_core/main_trainer.py``` and ```ief_core/models/ssm/ssm.py``` for all options. To specify a path to save a checkpoint (corresponding to model with best validation loss), simply add ```--ckpt_path [PATH TO OUTPUT FILE]``` to the command in step 2.
 
 Finally, to recreate the plots in the paper, see ```examples/model_analyses_final.ipynb```. 
