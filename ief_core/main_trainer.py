@@ -61,12 +61,11 @@ def objective(trial, args):
     
     dm = DataModule(dict_args, model)
     metrics_callback = MetricsCallback()
-    import pdb; pdb.set_trace()
     if args.ckpt_path != 'none': 
         checkpoint_callback = ModelCheckpoint(
             monitor='val_loss', \
             dirpath=args.ckpt_path, \
-            filename='ssm_ects_debug' + str(args.fold) + str(args.dim_stochastic) \
+            filename='ssm_syn_test' + str(args.fold) + str(args.dim_stochastic) \
                         + '_' + args.ttype + '_{epoch:05d}-{val_loss:.2f}', \
             mode='min', \
             every_n_val_epochs=2)
