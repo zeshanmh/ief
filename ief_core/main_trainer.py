@@ -61,6 +61,7 @@ def objective(trial, args):
     
     dm = DataModule(dict_args, model)
     metrics_callback = MetricsCallback()
+    callbacks = [metrics_callback]
     if args.ckpt_path != 'none': 
         checkpoint_callback = ModelCheckpoint(
             monitor='val_loss', \
@@ -69,13 +70,20 @@ def objective(trial, args):
                         + '_' + args.ttype + '_{epoch:05d}-{val_loss:.2f}', \
             mode='min', \
             every_n_val_epochs=2)
+        callbacks.append(checkpoint_callback)
     else: 
         checkpoint_callback = False
+
+    if args.gpu_id < 0:
+        gpus = 0
+    else:
+        gpus = [args.gpu_id]
+
     trainer = Trainer.from_argparse_args(args, 
         deterministic=True, 
         logger=False, 
-        gpus=[args.gpu_id], 
-        callbacks=[metrics_callback, checkpoint_callback], 
+        gpus=gpus, 
+        callbacks=callbacks,
         progress_bar_refresh_rate=1
     )
     trainer.fit(model, dm)
