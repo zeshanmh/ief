@@ -43,7 +43,7 @@ class DataModule(pl.LightningDataModule):
                 data_dir = os.path.join(os.environ['PT_DATA_DIR'],'ml_mmrf','ml_mmrf','output','cleaned_mm_fold_2mos_comb4.pkl')
             ddata = load_mmrf(fold_span = [fold], \
                               data_dir  = data_dir, \
-                              digitize_K = 20, \
+                              digitize_K = 36, \
                               digitize_method = 'uniform', \
                               restrict_markers=[], \
                               add_syn_marker=False, \
@@ -105,10 +105,12 @@ class DataModule(pl.LightningDataModule):
             M  = torch.from_numpy(self.ddata[fold][tvt]['m'].astype('float32'))
         y_vals   = self.ddata[fold][tvt]['ys_seq'][:,0].astype('float32')
         idx_sort = np.argsort(y_vals)
-
+        
         if 'digitized_y' in self.ddata[fold][tvt]:
             print ('using digitized y')
             Y  = torch.from_numpy(self.ddata[fold][tvt]['digitized_y'].astype('float32'))
+            if self.hparams["cumulative_y"]:
+                Y = torch.cumsum(Y,1)
         else:
             Y  = torch.from_numpy(self.ddata[fold][tvt]['ys_seq'][:,[0]]).squeeze()
 
@@ -262,9 +264,9 @@ class Model(pl.LightningModule):
         else: 
             raise ValueError('bad metric specified...')
 
-    def configure_optimizers(self): 
+    def configure_optimizers(self):
         if self.hparams['optimizer_name'] == 'adam': 
-            opt = torch.optim.Adam(self.parameters(), lr=self.lr) 
+            opt = torch.optim.Adam(self.parameters(), lr=self.hparams["lr"]) 
             return opt
         elif self.hparams['optimizer_name'] == 'rmsprop': 
             opt = torch.optim.RMSprop(self.parameters(), lr=self.hparams['lr'], momentum=.001)

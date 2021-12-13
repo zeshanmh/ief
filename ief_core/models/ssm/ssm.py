@@ -44,22 +44,27 @@ class SSM(Model):
         add_stochastic = self.hparams['add_stochastic']
         zmatrix     = self.hparams['zmatrix']
 
+        self.survival = self.hparams["survival"]
+
         # Inference Network
         self.inf_noise = np.abs(self.hparams['inf_noise'])
+        dim_inf_in = dim_data
+        if self.survival:
+            dim_inf_in = dim_inf_in+1
         if inftype == 'rnn':
-            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, \
+            self.inf_network    = RNN_STInf(dim_base, dim_inf_in, dim_treat, dim_hidden, \
                                             dim_stochastic, post_approx = post_approx, \
                                             rank = rank, combiner_type = combiner_type)
         elif inftype == 'rnn_bn':
-            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, \
+            self.inf_network    = RNN_STInf(dim_base, dim_inf_in, dim_treat, dim_hidden, \
                                             dim_stochastic, post_approx = post_approx, \
                                             rank = rank, use_bn=True, combiner_type = combiner_type)
         elif inftype == 'rnn_relu':
-            self.inf_network    = RNN_STInf(dim_base, dim_data, dim_treat, dim_hidden, \
+            self.inf_network    = RNN_STInf(dim_base, dim_inf_in, dim_treat, dim_hidden, \
                                             dim_stochastic, post_approx = post_approx, \
                                             rank = rank, nl='relu', combiner_type = combiner_type)
         elif inftype == 'att':
-            self.inf_network    = Attention_STInf(dim_base, dim_data, dim_treat, \
+            self.inf_network    = Attention_STInf(dim_base, dim_inf_in, dim_treat, \
                                                   dim_hidden, dim_stochastic, nheads = num_heads, \
                                                   post_approx = post_approx, rank = rank)
         else:
@@ -84,7 +89,10 @@ class SSM(Model):
         else: 
             self.transition_fxn = TransitionFunction(dim_stochastic, dim_data, dim_treat, dim_hidden, ttype, \
                 augmented=augmented, alpha1_type=alpha1_type, add_stochastic=add_stochastic, num_heads=num_heads, zmatrix=zmatrix)   
-        
+       
+        if self.survival:
+            self.e_y = nn.Sequential(nn.Linear(dim_stochastic,dim_hidden),nn.ReLU(),nn.Linear(dim_hidden, dim_hidden), nn.ReLU(), nn.Linear(dim_hidden,1))
+            self.survival_lambda = self.hparams.get("survival_lambda",1)
         # Prior over Z1
         self.prior_W        = nn.Linear(dim_treat+dim_data+dim_base, dim_stochastic)
         self.prior_sigma    = nn.Linear(dim_treat+dim_data+dim_base, dim_stochastic)
@@ -109,6 +117,11 @@ class SSM(Model):
             
         return mu, sigma
     
+    def p_Y_Z(self, Zt):
+        p_y          = torch.nn.functional.sigmoid(self.e_y(Zt))
+            
+        return p_y
+
     def p_Zt_Ztm1(self, Zt, A, B, X, A0, eps = 0.):
         X0 = X[:,0,:]; Xt = X[:,1:,:]
         inp_cat  = torch.cat([B, X0, A0], -1)
@@ -135,6 +148,8 @@ class SSM(Model):
         B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
         m_t, m_g_t, _      = get_masks(M[:,1:,:])
         Xnew = X + torch.randn(X.shape).to(X.device)*self.inf_noise
+        if self.survival:
+            Xnew = torch.cat((Xnew,Y[...,None]),-1)
         Z_t, q_zt          = self.inf_network(Xnew, A, M, B)
         Tmax               = Z_t.shape[1]
         p_x_mu, p_x_std    = self.p_X_Z(Z_t, A[:,1:Tmax+1,[0]])
@@ -142,7 +157,13 @@ class SSM(Model):
         masked_nll         = masked_gaussian_nll_3d(X[:,1:Tmax+1,:], p_x_mu, p_x_std, M[:,1:Tmax+1,:])
         full_masked_nll    = masked_nll
         masked_nll         = masked_nll.sum(-1).sum(-1)
-#         full_masked_kl_t = m_t[:,:Tmax]*kl_t
+        if self.survival:
+            p_y                = self.p_Y_Z(Z_t)
+            #TODO : make this log stable.
+            eps = 0.00001
+            ll_surv = ((1-Y[:,1:Tmax+1])*(torch.log(1-p_y[:,:,0]+eps))+Y[:,1:Tmax+1]*(torch.log(p_y[:,:,0]+eps))).sum(-1)
+            masked_nll = masked_nll - self.survival_lambda * ll_surv
+            #         full_masked_kl_t = m_t[:,:Tmax]*kl_t
 #         full_nelbo = full_masked_nll + (m_t[:,:Tmax]*kl_t)[...,None]
     
         if with_pred:
@@ -281,17 +302,27 @@ class SSM(Model):
             Zlist.append(sample)
         Z_t               = torch.cat([k[:,None,:] for k in Zlist], 1)
         p_x_mu, p_x_sigma = self.p_X_Z(Z_t, A[:,:Z_t.shape[1],[0]])
+        p_y = self.p_Y_Z(Z_t)
         sample = torch.squeeze(Independent(Normal(p_x_mu, p_x_sigma), 1).sample((1,)))
-        return sample, (Z_t, p_x_mu, p_x_sigma)
+        return sample, (Z_t, p_x_mu, p_x_sigma), p_y
     
     def inspect(self, T_forward, T_condition, B, X, A, M, Y, CE, restrict_lens = False, nsamples = 1, eps = 0.):
         self.eval()
         m_t, _, lens           = get_masks(M)
-        import pdb; pdb.set_trace()
         idx_select = lens>1
-        B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
+        if T_condition != -1:
+            _,_, lens_m = get_masks(M[:,:T_condition,:])
+            idx_select_m = lens_m>1
+            idx_select = idx_select * idx_select_m
+        B, X, A, M, Y, CE  = B[idx_select], X[idx_select], A[idx_select], M[idx_select], Y[idx_select], CE[idx_select]
         m_t, m_g_t, lens   = get_masks(M[:,1:,:])
-        Z_t, q_zt            = self.inf_network(X, A, M, B)
+        
+        if self.survival:
+            Xnew = torch.cat((X,Y[...,None]),-1)
+        else:
+            Xnew = X
+        
+        Z_t, q_zt            = self.inf_network(Xnew, A, M, B)
         p_x_mu, p_x_std      = self.p_X_Z(Z_t, A[:,:Z_t.shape[1],[0]])
         p_zt                 = self.p_Zt_Ztm1(Z_t, A, B, X, A[:,0,:], eps = eps)
         Tmax                 = Z_t.shape[1]
@@ -312,25 +343,33 @@ class SSM(Model):
             B, X, A, M, Y, CE  = B[idx_select], X[idx_select], A[idx_select], M[idx_select], Y[idx_select], CE[idx_select]
         
         x_forward_list = []
+        p_y_list = []
         for n in range(nsamples):
-            _,(_,x_forward,_)          = self.forward_sample(A[:,1:T_forward+1,:], T_forward-1, B = B, X0=X[:,0,:], A0=A[:,0,:], eps = eps)
+            _,(_,x_forward,_), p_y_          = self.forward_sample(A[:,1:T_forward+1,:], T_forward-1, B = B, X0=X[:,0,:], A0=A[:,0,:], eps = eps)
             x_forward_list.append(x_forward[...,None])
+            p_y_list.append(p_y_)
         x_forward                      = torch.cat(x_forward_list,-1).mean(-1)
         x_forward                      = torch.cat([X[:,[0],:], x_forward], 1)
-        
+        p_y = torch.cat(p_y_list,-1).mean(-1)
+        p_y = torch.cat([Y[:,[0]],p_y],1)
+
         if T_condition != -1: 
             x_forward_conditional_list = []
+            p_y_conditional_list = []
             for n in range(nsamples):
-                Z_t_cond, _                    = self.inf_network(X[:,:T_condition,:], A[:,:T_condition,:], M[:,:T_condition,:], B)
-                _,(_,x_forward_conditional,_)  = self.forward_sample(A[:,T_condition:,:], T_forward, Z_start = Z_t_cond[:,-1,:], B = B, eps = eps)
+                Z_t_cond, _                    = self.inf_network(Xnew[:,:T_condition,:], A[:,:T_condition,:], M[:,:T_condition,:], B)
+                _,(_,x_forward_conditional,_), p_y_  = self.forward_sample(A[:,T_condition:,:], T_forward, Z_start = Z_t_cond[:,-1,:], B = B, eps = eps)
                 x_forward_conditional_list.append(x_forward_conditional[...,None])
+                p_y_conditional_list.append(p_y_)
             
             x_forward_conditional = torch.cat(x_forward_conditional_list, -1).mean(-1)
             x_sample_conditional  = torch.cat([X[:,:T_condition,:], x_forward_conditional],1)
+            p_y_conditional = torch.cat(p_y_conditional_list,-1).mean(-1)
+            p_y_conditional = torch.cat([Y[:,:T_condition],p_y_conditional],1)
         
-            return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_sample_conditional, x_forward, (B,X,A,M,Y,CE), idx_select
+            return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_sample_conditional, x_forward, (B,X,A,M,Y,CE), idx_select, p_y_conditional, p_y
 
-        return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_forward, (B,X,A,M,Y,CE), idx_select
+        return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_forward, (B,X,A,M,Y,CE), idx_select, p_y
 
     def inspect_trt(self, B, X, A, M, Y, CE, nsamples=3): 
         self.eval()
@@ -388,6 +427,8 @@ class SSM(Model):
         parser.add_argument('--otype', type=str, default='linear', help='final layer of GroMOdE IEF (linear, identity, nl)')
         parser.add_argument('--add_stochastic', type=strtobool, default=False, help='conditioning alpha-1 of TEXP on S_[t-1]')
         parser.add_argument('--clock_ablation', type=strtobool, default=False, help='set to true to run without local clock')
+        parser.add_argument('--survival', type=strtobool, default=False, help='set to true to include nll of the event process')
+        parser.add_argument('--survival_lambda', type=float, default=1., help='regularization strength for the survival reconstruction')
 
         return parser 
 

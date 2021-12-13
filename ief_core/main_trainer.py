@@ -66,7 +66,7 @@ def objective(trial, args):
         checkpoint_callback = ModelCheckpoint(
             monitor='val_loss', \
             dirpath=args.ckpt_path, \
-            filename='ssm_syn_test' + str(args.fold) + str(args.dim_stochastic) \
+            filename= args.exp_name + "_" + args.model_name + str(args.fold) + str(args.dim_stochastic) \
                         + '_' + args.ttype + '_{epoch:05d}-{val_loss:.2f}', \
             mode='min', \
             every_n_val_epochs=2)
@@ -95,6 +95,7 @@ if __name__ == '__main__':
 
     # figure out which model to use and other basic params
     parser.add_argument('--model_name', type=str, default='sdmm', help='fomm, ssm, gru or sdmm')
+    parser.add_argument('--exp_name', type=str, default='experiment', help='name of the experiment used to save the model')
     parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
     parser.add_argument('--anneal', type=float, default=1., help='annealing rate')
     parser.add_argument('--fname', type=str, help='name of save file')
@@ -118,6 +119,7 @@ if __name__ == '__main__':
     parser.add_argument('--include_treatment', type=str, default='lines')
     parser.add_argument('--ckpt_path', type=str, default='none')
     parser.add_argument('--cluster_run', type=strtobool, default=True)
+    parser.add_argument('--cumulative_y', type=strtobool, default=False, help = "If true, the digitized y will be cumulative, that is once an event occurs, it stays on.")
     parser.add_argument('--data_dir', type=str, \
             default='/afs/csail.mit.edu/u/z/zeshanmh/research/ief/data/ml_mmrf/ml_mmrf/output/cleaned_mm_fold_2mos.pkl')
 
@@ -146,7 +148,6 @@ if __name__ == '__main__':
 
     parser = Trainer.add_argparse_args(parser)
     args = parser.parse_args()
-    
     # train
     if args.optuna: 
         pruner = optuna.pruners.MedianPruner()
@@ -170,7 +171,7 @@ if __name__ == '__main__':
             for k,v in trial.params.items(): 
                 fi.write(f'\t\t{k}: {v}\n')
     else: 
-        trial = optuna.trial.FixedTrial({'bs': args.bs, 'lr': args.lr, 'C': args.C, 'reg_all': args.reg_all, 'reg_type': args.reg_type, 'dim_stochastic': args.dim_stochastic})    
+        trial = optuna.trial.FixedTrial({'bs': args.bs, 'lr': args.lr, 'C': args.C, 'reg_all': args.reg_all, 'reg_type': args.reg_type, 'dim_stochastic': args.dim_stochastic, "dim_hidden":args.dim_hidden})    
         best_nelbo, val_nelbos, train_losses = objective(trial, args)
         print(f'BEST_NELBO: {best_nelbo}')
         ## TODO for Linden: save val_nelbos and train_losses to .csv and plot them ## 
