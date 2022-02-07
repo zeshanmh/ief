@@ -51,6 +51,19 @@ class DataModule(pl.LightningDataModule):
                               data_aug=False, \
                               ablation=True, \
                               feats=[self.hparams['include_baseline'], self.hparams['include_treatment']])
+            # restrict baseline to only first six features  
+            for t in ['train', 'valid', 'test']: 
+                ddata[fold][t]['b'] = np.concatenate((ddata[fold][t]['b'][:,:11],ddata[fold][t]['b'][:,56:]),axis=-1)
+                ddata[fold][t]['feature_names'] = np.concatenate((ddata[fold][t]['feature_names'][:11],ddata[fold][t]['feature_names'][56:]),axis=-1)
+            # restrict longitudinal features to only four core features
+            if self.hparams['restrict_feats']: 
+                feats = list(ddata[fold][t]['feature_names_x'])
+                kappa_idx = feats.index('serum_kappa'); iga_idx = feats.index('serum_iga')
+                igg_idx   = feats.index('serum_igg');   lambda_idx = feats.index('serum_lambda')
+                for t in ['train', 'valid', 'test']: 
+                    ddata[fold][t]['x'] = ddata[fold][t]['x'][...,[kappa_idx, iga_idx, igg_idx, lambda_idx]]
+                    ddata[fold][t]['m'] = ddata[fold][t]['m'][...,[kappa_idx, iga_idx, igg_idx, lambda_idx]]
+                    ddata[fold][t]['feature_names_x'] = ddata[fold][t]['feature_names_x'][[kappa_idx,iga_idx,igg_idx,lambda_idx]]
 
         elif self.hparams['dataset'] == 'synthetic': 
             nsamples        = {'train':self.hparams['nsamples_syn'], 'valid':1000, 'test':200}
@@ -92,7 +105,6 @@ class DataModule(pl.LightningDataModule):
         
     def load_helper(self, tvt, device=None, oversample=True, att_mask=False):
         fold = self.hparams['fold']; batch_size = self.hparams['bs']
-    
         if device is not None: 
             B  = torch.from_numpy(self.ddata[fold][tvt]['b'].astype('float32')).to(device)
             X  = torch.from_numpy(self.ddata[fold][tvt]['x'].astype('float32')).to(device)
@@ -126,16 +138,96 @@ class DataModule(pl.LightningDataModule):
             data = TensorDataset(B[idx_sort], X[idx_sort], A[idx_sort], M[idx_sort], Y[idx_sort], CE[idx_sort])
         data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
         return data, data_loader
+    
+    def load_resplit(self, tvt, device=None, att_mask=False, include_test=True): 
+        fold = self.hparams['fold']; batch_size = self.hparams['bs']
+        
+        # concatenate all tensors 
+        if include_test: 
+            Xnp = np.concatenate((self.ddata[fold]['train']['x'],self.ddata[fold]['valid']['x'],self.ddata[fold]['test']['x']),axis=0)
+            Bnp = np.concatenate((self.ddata[fold]['train']['b'],self.ddata[fold]['valid']['b'],self.ddata[fold]['test']['b']),axis=0)
+            Ynp = np.concatenate((self.ddata[fold]['train']['ys_seq'],self.ddata[fold]['valid']['ys_seq'],\
+                                  self.ddata[fold]['test']['ys_seq']),axis=0)
+            Anp = np.concatenate((self.ddata[fold]['train']['a'],self.ddata[fold]['valid']['a'],self.ddata[fold]['test']['a']),axis=0)
+            Mnp = np.concatenate((self.ddata[fold]['train']['m'],self.ddata[fold]['valid']['m'],self.ddata[fold]['test']['m']),axis=0)
+            CEnp = np.concatenate((self.ddata[fold]['train']['ce'],self.ddata[fold]['valid']['ce'],self.ddata[fold]['test']['ce']),axis=0)
+            pids_np = np.concatenate((self.ddata[fold]['train']['pids'],self.ddata[fold]['valid']['pids'],\
+                                      self.ddata[fold]['test']['pids']),axis=0)
+        else: 
+            Xnp = np.concatenate((self.ddata[fold]['train']['x'],self.ddata[fold]['valid']['x']),axis=0)
+            Bnp = np.concatenate((self.ddata[fold]['train']['b'],self.ddata[fold]['valid']['b']),axis=0)
+            Ynp = np.concatenate((self.ddata[fold]['train']['ys_seq'],self.ddata[fold]['valid']['ys_seq']),axis=0)
+            Anp = np.concatenate((self.ddata[fold]['train']['a'],self.ddata[fold]['valid']['a']),axis=0)
+            Mnp = np.concatenate((self.ddata[fold]['train']['m'],self.ddata[fold]['valid']['m']),axis=0)
+            CEnp = np.concatenate((self.ddata[fold]['train']['ce'],self.ddata[fold]['valid']['ce']),axis=0)
+            pids_np = np.concatenate((self.ddata[fold]['train']['pids'],self.ddata[fold]['valid']['pids']),axis=0)
+        
+        ##
+        if device is not None: 
+            B  = torch.from_numpy(Bnp.astype('float32')).to(device)
+            X  = torch.from_numpy(Xnp.astype('float32')).to(device)
+            A  = torch.from_numpy(Anp.astype('float32')).to(device)
+            M  = torch.from_numpy(Mnp.astype('float32')).to(device)
+        else: 
+            B  = torch.from_numpy(Bnp.astype('float32'))
+            X  = torch.from_numpy(Xnp.astype('float32'))
+            A  = torch.from_numpy(Anp.astype('float32'))
+            M  = torch.from_numpy(Mnp.astype('float32'))
+            
+        if 'digitized_y' in self.ddata[fold]['train']:
+            print ('using digitized y')
+            if include_test: 
+                Ynp = np.concatenate((self.ddata[fold]['train']['digitized_y'],self.ddata[fold]['valid']['digitized_y'],\
+                              self.ddata[fold]['test']['digitized_y']),axis=0)
+            else: 
+                Ynp = np.concatenate((self.ddata[fold]['train']['digitized_y'],\
+                                      self.ddata[fold]['valid']['digitized_y']),axis=0)
+            Y  = torch.from_numpy(Ynp.astype('float32'))
+        else:
+            Y  = torch.from_numpy(Ynp.astype('float32')[:,[0]]).squeeze()
+
+        if device is not None: 
+            Y = Y.to(device)
+            CE = torch.from_numpy(CEnp.astype('float32')).to(device)
+        else: 
+            CE = torch.from_numpy(CEnp.astype('float32'))
+
+        from sklearn.model_selection import train_test_split
+        train_idxs, test_idxs = train_test_split(np.arange(Bnp.shape[0]),test_size=0.2,stratify=CEnp,random_state=42)
+        
+        if att_mask: 
+            attn_shape = (A.shape[0],A.shape[1],A.shape[1])
+            Am   = get_attn_mask(attn_shape, Anp, device)
+        if tvt == 'train': 
+            B  = B[train_idxs]; X = X[train_idxs]; A = A[train_idxs]; M = M[train_idxs]; Y = Y[train_idxs]; CE = CE[train_idxs]
+            if att_mask: 
+                Am = Am[train_idxs]
+        elif tvt == 'valid' or tvt == 'test': 
+            B = B[test_idxs]; X = X[test_idxs]; A = A[test_idxs]; M = M[test_idxs]; Y = Y[test_idxs]; CE = CE[test_idxs]
+            if att_mask: 
+                Am = Am[test_idxs]
+                
+        if att_mask: 
+            data = TensorDataset(B, X, A, M, Y, CE, Am)
+        else: 
+            data = TensorDataset(B, X, A, M, Y, CE)
+        
+        data_loader = DataLoader(data, batch_size=batch_size, shuffle=False)
+        return data, data_loader
 
     def train_dataloader(self):
-        if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
+        if self.hparams['dataset'] == 'mm':
+            _, train_loader = self.load_resplit(tvt='train', att_mask=self.hparams['att_mask'], include_test=False)
+        elif self.hparams['dataset'] == 'synthetic':
             _, train_loader = self.load_helper(tvt='train', att_mask=self.hparams['att_mask'])
         elif self.hparams['dataset'] == 'semi_synthetic': 
             _, train_loader = load_ss_helper(self.ddata, tvt='train', bs=self.hparams['bs'])
         return train_loader
 
     def val_dataloader(self):
-        if self.hparams['dataset'] == 'mm' or self.hparams['dataset'] == 'synthetic':
+        if self.hparams['dataset'] == 'mm':
+            _, valid_loader = self.load_resplit(tvt='valid', att_mask=self.hparams['att_mask'], include_test=False)
+        elif self.hparams['dataset'] == 'synthetic':
             _, valid_loader = self.load_helper(tvt='valid', att_mask=self.hparams['att_mask'])
         elif self.hparams['dataset'] == 'semi_synthetic': 
             _, valid_loader = load_ss_helper(self.ddata, tvt='valid', bs=self.hparams['bs'])

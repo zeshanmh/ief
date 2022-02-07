@@ -260,7 +260,7 @@ class SSM(Model):
         
         return (torch.mean(neg_elbo), torch.mean(masked_nll), torch.mean(kl), torch.ones_like(kl)), loss
     
-    def forward_sample(self, A, T_forward, Z_start = None, B=None, X0=None, A0=None, eps = 0.):
+    def forward_sample(self, A, T_forward, Z_start = None, B=None, X0=None, A0=None, eps = 0., sample_Z=True):
         if Z_start is None:
             inp_cat  = torch.cat([B, X0, A0], -1)
             mu1      = self.prior_W(inp_cat)
@@ -275,20 +275,29 @@ class SSM(Model):
                 mut, sigmat= self.transition_fxn(Ztm1, Acat, eps = eps)
             else:
                 mut, sigmat= self.transition_fxn(Ztm1, A[:,t-1,:], eps = eps)
-            sample = torch.squeeze(Independent(Normal(mut, sigmat), 1).sample((1,)))
-            if len(sample.shape) == 1: 
-                sample = sample[None,...]
-            Zlist.append(sample)
+            if sample_Z:
+                sample = torch.squeeze(Independent(Normal(mut, sigmat), 1).sample((1,)))
+                if len(sample.shape) == 1: 
+                    sample = sample[None,...]
+                Zlist.append(sample)
+            else: 
+                if len(mut.shape) == 1: 
+                    mut = mut[None,...]
+                Zlist.append(mut) #debug dimensions on this
+            
         Z_t               = torch.cat([k[:,None,:] for k in Zlist], 1)
         p_x_mu, p_x_sigma = self.p_X_Z(Z_t, A[:,:Z_t.shape[1],[0]])
         sample = torch.squeeze(Independent(Normal(p_x_mu, p_x_sigma), 1).sample((1,)))
         return sample, (Z_t, p_x_mu, p_x_sigma)
     
-    def inspect(self, T_forward, T_condition, B, X, A, M, Y, CE, restrict_lens = False, nsamples = 1, eps = 0.):
+    def inspect(self, T_forward, T_condition, B, X, A, M, Y, CE, restrict_lens = False, nsamples = 1, eps = 0., sample_Z=True, sample_X=False):
         self.eval()
         m_t, _, lens           = get_masks(M)
-        import pdb; pdb.set_trace()
         idx_select = lens>1
+        if T_condition != -1: 
+            _, _, lens_m = get_masks(M[:,:T_condition,:])
+            idx_select_m = lens_m>1 
+            idx_select   = idx_select*idx_select_m
         B, X, A, M, Y, CE  = B[lens>1], X[lens>1], A[lens>1], M[lens>1], Y[lens>1], CE[lens>1]
         m_t, m_g_t, lens   = get_masks(M[:,1:,:])
         Z_t, q_zt            = self.inf_network(X, A, M, B)
@@ -312,11 +321,18 @@ class SSM(Model):
             B, X, A, M, Y, CE  = B[idx_select], X[idx_select], A[idx_select], M[idx_select], Y[idx_select], CE[idx_select]
         
         x_forward_list = []
+        Z_forward_list = []
         for n in range(nsamples):
-            _,(_,x_forward,_)          = self.forward_sample(A[:,1:T_forward+1,:], T_forward-1, B = B, X0=X[:,0,:], A0=A[:,0,:], eps = eps)
-            x_forward_list.append(x_forward[...,None])
+            x_forward_sample, (Z_forward, x_forward, _) = self.forward_sample(A[:,1:T_forward+1,:], T_forward-1, \
+                                                                                       B = B, X0=X[:,0,:], A0=A[:,0,:], eps = eps, sample_Z=sample_Z)
+            if sample_X: 
+                x_forward_list.append(x_forward_sample[...,None])
+            else: 
+                x_forward_list.append(x_forward[...,None])
+            Z_forward_list.append(Z_forward[...,None])
         x_forward                      = torch.cat(x_forward_list,-1).mean(-1)
         x_forward                      = torch.cat([X[:,[0],:], x_forward], 1)
+        Z_forward                      = torch.cat(Z_forward_list,-1).mean(-1)
         
         if T_condition != -1: 
             x_forward_conditional_list = []
@@ -328,9 +344,12 @@ class SSM(Model):
             x_forward_conditional = torch.cat(x_forward_conditional_list, -1).mean(-1)
             x_sample_conditional  = torch.cat([X[:,:T_condition,:], x_forward_conditional],1)
         
-            return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_sample_conditional, x_forward, (B,X,A,M,Y,CE), idx_select
+            return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), \
+                    torch.ones_like(masked_kl_t), x_sample_conditional, \
+                    x_forward, (B,X,A,M,Y,CE), idx_select
 
-        return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), torch.ones_like(masked_kl_t), x_forward, (B,X,A,M,Y,CE), idx_select
+        return neg_elbo, per_feat_nelbo, torch.ones_like(masked_kl_t), \
+            torch.ones_like(masked_kl_t), x_forward, (B,X,A,M,Y,CE), idx_select, Z_forward
 
     def inspect_trt(self, B, X, A, M, Y, CE, nsamples=3): 
         self.eval()

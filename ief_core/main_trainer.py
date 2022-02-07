@@ -65,10 +65,10 @@ def objective(trial, args):
         checkpoint_callback = ModelCheckpoint(
             monitor='val_loss', \
             dirpath=args.ckpt_path, \
-            filename='ssm_syn_test' + str(args.fold) + str(args.dim_stochastic) \
+            filename='ssm_syn_omar' + str(args.fold) + str(args.dim_stochastic) \
                         + '_' + args.ttype + '_{epoch:05d}-{val_loss:.2f}', \
             mode='min', \
-            every_n_val_epochs=2)
+            every_n_val_epochs=1)
     else: 
         checkpoint_callback = False
     trainer = Trainer.from_argparse_args(args, 
@@ -105,6 +105,7 @@ if __name__ == '__main__':
     parser.add_argument('--fold', default=1, type=int)
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--optuna', type=strtobool, default=False, help='whether to use optuna for optimization')
+    parser.add_argument('--restrict_feats', type=strtobool, default=False, help='whether to restrict features to the four core ones during training')
     parser.add_argument('--num_optuna_trials', default=100, type=int)
     parser.add_argument('--include_baseline', type=str, default='all')
     parser.add_argument('--include_treatment', type=str, default='lines')
